@@ -415,6 +415,92 @@ def pow {R : Type*} [Ring R] [BEq R] [LawfulBEq R] (p : QuotientCPolynomial R) (
 
 -- TODO: div/field operations?
 
+section Operations
+
+variable [Nontrivial R] [Ring R] [LawfulBEq R]
+/- These will be standing on assumptions on R, we prove that `QuotientCPolynomial R` is a ring.
+We prove that `QuotientCPolynomial R` is an increasingly structured typeclass for readability. -/
+
+instance : Zero (QuotientCPolynomial R) := ⟨Quotient.mk _ (#[])⟩
+instance : One (QuotientCPolynomial R) := ⟨Quotient.mk _ (CPolynomial.C 1)⟩
+instance : Add (QuotientCPolynomial R) := ⟨QuotientCPolynomial.add⟩
+instance : SMul R (QuotientCPolynomial R) := ⟨QuotientCPolynomial.smul⟩
+instance : SMul ℕ (QuotientCPolynomial R) := ⟨nsmul⟩
+instance : Neg (QuotientCPolynomial R) := ⟨QuotientCPolynomial.neg⟩
+instance : Sub (QuotientCPolynomial R) := ⟨QuotientCPolynomial.sub⟩
+instance : Mul (QuotientCPolynomial R) := ⟨QuotientCPolynomial.mul⟩
+instance : Pow (QuotientCPolynomial R) Nat := ⟨QuotientCPolynomial.pow⟩
+instance : NatCast (QuotientCPolynomial R) := ⟨fun n => Quotient.mk _ ( CPolynomial.C (n : R))⟩
+instance : IntCast (QuotientCPolynomial R) := ⟨fun n => Quotient.mk _ (CPolynomial.C (n : R))⟩
+
+/-- `QuotientCPolynomial R` forms an commutative group under addition.
+
+  The group structure is inherited from the addition on R
+-/
+instance [LawfulBEq R] : AddCommGroup (QuotientCPolynomial R) where
+  add_assoc := sorry
+  zero_add := sorry
+  add_zero := sorry
+  add_comm := sorry --by rw[add_comm]
+  neg_add_cancel := sorry -- by rw[neg_add_cancel]
+  nsmul := nsmul
+  nsmul_zero := by sorry -- rw[nsmul_zero]
+  nsmul_succ := by sorry -- rw[nsmul_succ]
+  sub_eq_add_neg := sorry
+  zsmul := by aesop
+  zsmul_zero' := sorry
+  zsmul_succ' := sorry
+  zsmul_neg' := sorry
+
+/-- `QuotientCPolynomial R` forms a semiring under multiplication and addition inherited from R.
+-/
+instance : Semiring (QuotientCPolynomial R) where
+  mul_assoc := sorry
+  one_mul := sorry
+  mul_one := sorry
+  zero_mul := sorry
+  mul_zero := sorry
+  left_distrib := sorry
+  right_distrib := sorry
+  npow n p := p.pow n
+  npow_zero := sorry
+  npow_succ := sorry
+  natCast_zero := by sorry
+  natCast_succ := by sorry
+
+/-- `QuotientCPolynomial R` forms a ring when R is a ring.
+-/
+instance : Ring (QuotientCPolynomial R) where
+  sub_eq_add_neg := sorry -- by intro a b; rfl
+  zsmul := zsmulRec
+  zsmul_zero' := by sorry
+  zsmul_succ' := by sorry
+  zsmul_neg' := by sorry
+  intCast_ofNat := by sorry
+  intCast_negSucc := by sorry
+  neg_add_cancel := by sorry
+
+section CommRing
+
+variable [CommRing R]
+
+/-- `QuotientCPolynomial R` forms a commutative semiring when R is commutative.
+-/
+instance : CommSemiring (QuotientCPolynomial R) where
+  mul_comm := sorry
+
+/-- `QuotientCPolynomial R` forms a commutative ring when `R` is a commutative ring.
+
+  This combines the `CommSemiring` and `Ring` structures.
+-/
+
+instance : CommRing (QuotientCPolynomial R) where
+  -- All structure inherited from `CommSemiring` and `Ring` instances
+
+end CommRing
+
+end Operations
+
 end QuotientCPolynomial
 
 end Quotient
