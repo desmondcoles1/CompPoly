@@ -475,7 +475,7 @@ def mulX (p : CPolynomial R) : CPolynomial R := p.mulPowX 1
 /-- Multiplication using the naive `O(n²)` algorithm: `Σᵢ (aᵢ * q) * X^i`. -/
 @[inline, specialize]
 def mul (p q : CPolynomial R) : CPolynomial R :=
-  p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc.add <| (smul a q).mulPowX i) (C 0)
+  p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc.add <| (smul a q).mulPowX i) (mk #[])
 
 /-- Exponentiation of a `CPolynomial` by a natural number `n` via repeated multiplication. -/
 @[inline, specialize]
@@ -729,15 +729,62 @@ theorem neg_add_cancel [LawfulBEq R] (p : CPolynomial R) : -p + p = 0 := by
   rw [add_coeff?]
   rcases (Nat.lt_or_ge i p.size) with hi | hi <;> simp [hi, Neg.neg, neg]
 
+/-
+CPolynomial does in general form a Ring or any other 'nice' structure,
+but many properties necessary to be a ring are satisfied or close to satisifed,
+as per the following theorems.
+-/
+
+theorem zero_add_trim [LawfulBEq R] (p : CPolynomial R) : 0 + p = p.trim := by
+  apply congrArg trim
+  ext <;> simp [add_size, add_coeff, *]
+
+theorem add_zero_trim [LawfulBEq R] (p : CPolynomial R) : p + 0 = p.trim := by
+  apply congrArg trim
+  ext <;> simp [add_size, add_coeff, *]
+
+theorem one_mul_trimmed [LawfulBEq R] (p : CPolynomial R) : 1 * p = p.trim := by
+  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
+      a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
+        by exact fun a b => rfl
+  have : 1 * p = (mk #[1] : CPolynomial R).mul p := by rfl
+  rw [this, h_mul_def]
+  show (mk #[1]).zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) = p.trim
+  conv_lhs => rw [show (mk #[1] : CPolynomial R).zipIdx = #[(1, 0)] by rfl]
+  rw [show Array.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) #[(1, 0)] =
+           (mk #[] : CPolynomial R).add ((smul 1 p).mulPowX 0) by rfl]
+  rw [show (smul (1 : R) p).mulPowX 0 = p by simp [smul, mulPowX, one_mul]]
+  have : (mk #[]).add p = 0 + p := by rfl
+  rw[this, zero_add_trim]
+
+theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by sorry
+  -- take a similar approach to the above, but induct on the length of p
+
+lemma smul_addRaw_distrib [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), smul a' (q.addRaw r) = (smul a' q).addRaw (smul a' r) := by sorry
+
+lemma smul_distrib_trim [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim = smul a' q + smul a' r := by sorry
+
+theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by sorry
+  -- induct on the length of p
+
+theorem right_distrib [LawfulBEq R] (p q r : CPolynomial R) : (p + q) * r = p * r + q * r := by sorry
+  -- induct on the length of p
+
+theorem mul_assoc [LawfulBEq R] (p q r : CPolynomial R) : p * q * r = p * (q * r) := by sorry
+  -- use induction and the distributivity theorems
+
+theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by sorry
+  -- define a new multiplication using raw addition and prove commutivity there
+  -- then prove that this new mutliplication gives mul after trimming the result
+
 end Operations
 
-section AddCommSemigroup
-
+section AddCommSemiroup
 instance [LawfulBEq R] : AddCommSemigroup (CPolynomial R) where
   add_assoc := by intro _ _ _; rw [add_assoc]
   add_comm := add_comm
 
-end AddCommSemigroup
+end AddCommSemiroup
 
 end CPolynomial
 
