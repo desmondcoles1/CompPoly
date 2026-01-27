@@ -191,10 +191,10 @@ lemma mul_trim_equiv [LawfulBEq R] (a b : CPolynomial R) :
   obtain ⟨l, hl⟩ := h_zipIdx_split
   have h_foldl_split : ∃ acc, (a.mul b) = (l.foldl (mulStep b) acc) ∧ (a.trim.mul b) = acc := by
     -- By definition of `mul`, we can rewrite `a.mul b` using `mulStep` and the foldl operation.
-    have h_mul_def : a.mul b = (a.zipIdx.toList.foldl (mulStep b) (C 0)) := by
+    have h_mul_def : a.mul b = (a.zipIdx.toList.foldl (mulStep b) (mk #[])) := by
       unfold mul
       exact Eq.symm (Array.foldl_toList (mulStep b))
-    have h_mul_def_trim : a.trim.mul b = (a.trim.zipIdx.toList.foldl (mulStep b) (C 0)) := by
+    have h_mul_def_trim : a.trim.mul b = (a.trim.zipIdx.toList.foldl (mulStep b) (mk #[])) := by
       unfold mul
       exact Eq.symm (Array.foldl_toList (mulStep b))
     aesop
@@ -216,7 +216,7 @@ lemma mul_equiv₂ [LawfulBEq R] (a b₁ b₂ : CPolynomial R) :
   -- By definition of multiplication, we can express `a.mul b₁` and `a.mul b₂` in terms of
   -- their sums of products of coefficients.
   have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
-    a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (C 0)) :=
+    a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
       by exact fun a b => rfl
   intro h
   have h_foldl_equiv : ∀ (l : List (R × ℕ)) (acc : CompPoly.CPolynomial R),
@@ -231,7 +231,7 @@ lemma mul_equiv₂ [LawfulBEq R] (a b₁ b₂ : CPolynomial R) :
       · -- Apply the lemma that multiplying by X^i preserves equivalence.
         apply mulPowX_equiv
         exact fun i => by rw [ smul_equiv, smul_equiv ]; exact congr_arg _ ( h i )
-  convert h_foldl_equiv ( Array.toList ( Array.zipIdx a ) ) ( C 0 ) using 1 <;> grind
+  convert h_foldl_equiv ( Array.toList ( Array.zipIdx a ) ) ( mk #[] ) using 1 <;> grind
 
 end EquivalenceLemmas
 
@@ -414,92 +414,6 @@ def pow {R : Type*} [Ring R] [BEq R] [LawfulBEq R] (p : QuotientCPolynomial R) (
   Quotient.lift (fun p => powDescending p n) (pow_descends n) p
 
 -- TODO: div/field operations?
-
-section Operations
-
-variable [Nontrivial R] [Ring R] [LawfulBEq R]
-/- These will be standing on assumptions on R, we prove that `QuotientCPolynomial R` is a ring.
-We prove that `QuotientCPolynomial R` is an increasingly structured typeclass for readability. -/
-
-instance : Zero (QuotientCPolynomial R) := ⟨Quotient.mk _ (#[])⟩
-instance : One (QuotientCPolynomial R) := ⟨Quotient.mk _ (CPolynomial.C 1)⟩
-instance : Add (QuotientCPolynomial R) := ⟨QuotientCPolynomial.add⟩
-instance : SMul R (QuotientCPolynomial R) := ⟨QuotientCPolynomial.smul⟩
-instance : SMul ℕ (QuotientCPolynomial R) := ⟨nsmul⟩
-instance : Neg (QuotientCPolynomial R) := ⟨QuotientCPolynomial.neg⟩
-instance : Sub (QuotientCPolynomial R) := ⟨QuotientCPolynomial.sub⟩
-instance : Mul (QuotientCPolynomial R) := ⟨QuotientCPolynomial.mul⟩
-instance : Pow (QuotientCPolynomial R) Nat := ⟨QuotientCPolynomial.pow⟩
-instance : NatCast (QuotientCPolynomial R) := ⟨fun n => Quotient.mk _ ( CPolynomial.C (n : R))⟩
-instance : IntCast (QuotientCPolynomial R) := ⟨fun n => Quotient.mk _ (CPolynomial.C (n : R))⟩
-
-/-- `QuotientCPolynomial R` forms an commutative group under addition.
-
-  The group structure is inherited from the addition on R
--/
-instance [LawfulBEq R] : AddCommGroup (QuotientCPolynomial R) where
-  add_assoc := sorry
-  zero_add := sorry
-  add_zero := sorry
-  add_comm := sorry --by rw[add_comm]
-  neg_add_cancel := sorry -- by rw[neg_add_cancel]
-  nsmul := nsmul
-  nsmul_zero := by sorry -- rw[nsmul_zero]
-  nsmul_succ := by sorry -- rw[nsmul_succ]
-  sub_eq_add_neg := sorry
-  zsmul := by aesop
-  zsmul_zero' := sorry
-  zsmul_succ' := sorry
-  zsmul_neg' := sorry
-
-/-- `QuotientCPolynomial R` forms a semiring under multiplication and addition inherited from R.
--/
-instance : Semiring (QuotientCPolynomial R) where
-  mul_assoc := sorry
-  one_mul := sorry
-  mul_one := sorry
-  zero_mul := sorry
-  mul_zero := sorry
-  left_distrib := sorry
-  right_distrib := sorry
-  npow n p := p.pow n
-  npow_zero := sorry
-  npow_succ := sorry
-  natCast_zero := by sorry
-  natCast_succ := by sorry
-
-/-- `QuotientCPolynomial R` forms a ring when R is a ring.
--/
-instance : Ring (QuotientCPolynomial R) where
-  sub_eq_add_neg := sorry -- by intro a b; rfl
-  zsmul := zsmulRec
-  zsmul_zero' := by sorry
-  zsmul_succ' := by sorry
-  zsmul_neg' := by sorry
-  intCast_ofNat := by sorry
-  intCast_negSucc := by sorry
-  neg_add_cancel := by sorry
-
-section CommRing
-
-variable [CommRing R]
-
-/-- `QuotientCPolynomial R` forms a commutative semiring when R is commutative.
--/
-instance : CommSemiring (QuotientCPolynomial R) where
-  mul_comm := sorry
-
-/-- `QuotientCPolynomial R` forms a commutative ring when `R` is a commutative ring.
-
-  This combines the `CommSemiring` and `Ring` structures.
--/
-
-instance : CommRing (QuotientCPolynomial R) where
-  -- All structure inherited from `CommSemiring` and `Ring` instances
-
-end CommRing
-
-end Operations
 
 end QuotientCPolynomial
 
