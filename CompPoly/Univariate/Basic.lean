@@ -757,12 +757,84 @@ theorem one_mul_trimmed [LawfulBEq R] (p : CPolynomial R) : 1 * p = p.trim := by
   have : (mk #[]).add p = 0 + p := by rfl
   rw[this, zero_add_trim]
 
-theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by sorry
+theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
   -- take a similar approach to the above, but induct on the length of p
+  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
+        a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
+          by exact fun a b => rfl
+  have one_mul_unfold : p * 1 = p.mul (mk #[1] : CPolynomial R) := by rfl
+  rw [one_mul_unfold, h_mul_def]
+  have id_mul : ∀ (a' : R) (i : ℕ), (smul a' (mk #[1])).mulPowX i = (mk #[a']).mulPowX i := by
+    unfold smul; simp
+  simp_rw [id_mul]
+  cases p with | mk lst =>
+  induction lst using List.reverseRecOn with
+  | nil => simp; unfold trim; grind
+  | append_singleton l a ih =>
+    simp only [Array.zipIdx]
+    have mapIdx_append : (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l ++ [a] }) =
+      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l }) ++ #[(a, l.length)] := by
+      simp [Array.mapIdx]
+      sorry
+    rw [mapIdx_append]
+    simp only [ Array.foldl]
+    have ih' := ih rfl
+    simp only at ih'
+    /-
+    have : (Array.foldlM (fun x y => pure (x.add (mulPowX y.2 (mk #[y.1])))) (mk #[])
+      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l } = trim { toList := l } := by sorry
+    have : mulPowX l.length (mk #[a]) = mk (Array.replicate l.length 0 ++ #[a]) := by rfl
+    have : (trim { toList := l }).add (mk (Array.replicate l.length 0 ++ #[a])) = trim { toList := l ++ [a] } := by
+      simp [add, addRaw, trim, Array.matchSize]
+      sorry
+    -/
+    sorry
 
 lemma smul_addRaw_distrib [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), smul a' (q.addRaw r) = (smul a' q).addRaw (smul a' r) := by sorry
 
-lemma smul_distrib_trim [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim = smul a' q + smul a' r := by sorry
+lemma smul_distrib_trim [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim = smul a' q + smul a' r := by
+  have h_add_def : ∀ (a b : CPolynomial R),  a + b = (a.addRaw b).trim := by intros; rfl
+  simp[h_add_def]
+  intros; apply congrArg trim
+  sorry
+
+theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by
+  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
+      a * b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
+        by exact fun a b => rfl
+  rw[h_mul_def p (q+r)]
+  rw[h_mul_def p q, h_mul_def p r]
+  have fun_dist: Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' q)))
+      (mk #[]) (Array.zipIdx p) +
+    Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' r)))
+      (mk #[]) (Array.zipIdx p) =
+    Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' (q + r))))
+      (mk #[]) (Array.zipIdx p)
+            := by
+    suffices ∀ (lst : List (R × ℕ)) (acc1 acc2 : CPolynomial R),
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' q))) acc1 ⟨lst⟩ +
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' r))) acc2 ⟨lst⟩ =
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' (q + r)))) (acc1 + acc2) ⟨lst⟩ by
+      sorry
+    intro lst acc1 acc2
+    induction lst generalizing acc1 acc2 with
+    | nil => simp [Array.foldl]
+    | cons elem tail ih =>
+      simp only [Array.foldl]
+      obtain ⟨a', i⟩ := elem
+      simp[smul_add]
+      have mulPowX_add : ∀ i (p q : CPolynomial R), mulPowX i (p + q) = mulPowX i p + mulPowX i q := by sorry
+      sorry
+  grind
 
 theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by sorry
   -- induct on the length of p
