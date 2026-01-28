@@ -799,6 +799,7 @@ theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
       sorry
     -/
     sorry
+
 /-- The coefficient of `p * X^n` at index `i` is `p_{i-n}` if `i >= n`, else 0. -/
 lemma coeff_mulPowX [LawfulBEq R] (p : CPolynomial R) (n i : ℕ) :
     (p.mulPowX n).coeff i = if i < n then 0 else p.coeff (i - n) := by
