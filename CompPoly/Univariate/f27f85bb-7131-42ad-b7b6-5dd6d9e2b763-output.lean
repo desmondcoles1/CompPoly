@@ -1,4 +1,50 @@
 /-
+This file was edited by Aristotle.
+
+Lean version: leanprover/lean4:v4.24.0
+Mathlib version: f897ebcf72cd16f89ab4577d0c826cd14afaafc7
+This project request had uuid: f27f85bb-7131-42ad-b7b6-5dd6d9e2b763
+
+To cite Aristotle, tag @Aristotle-Harmonic on GitHub PRs/issues, and add as co-author to commits:
+Co-authored-by: Aristotle (Harmonic) <aristotle-harmonic@harmonic.fun>
+
+The following was negated by Aristotle:
+
+- theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p
+
+- theorem mul_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q +r) = p * q + p * r
+
+Here is the code for the `negate_state` tactic, used within these negations:
+
+```lean
+import Mathlib
+open Lean Meta Elab Tactic in
+elab "revert_all" : tactic => do
+  let goals ← getGoals
+  let mut newGoals : List MVarId := []
+  for mvarId in goals do
+    newGoals := newGoals.append [(← mvarId.revertAll)]
+  setGoals newGoals
+
+open Lean.Elab.Tactic in
+macro "negate_state" : tactic => `(tactic|
+  (
+    guard_goal_nums 1
+    revert_all
+    refine @(((by admit) : ∀ {p : Prop}, ¬p → p) ?_)
+    try (push_neg; guard_goal_nums 1)
+  )
+)
+```
+
+
+
+At Harmonic, we use a modified version of the `generalize_proofs` tactic.
+For compatibility, we include this tactic at the start of the file.
+If you add the comment "-- Harmonic `generalize_proofs` tactic" to your file, we will not do this.
+-/
+
+/-
 Copyright (c) 2025 CompPoly. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Quang Dao, Gregor Mitscha-Baude, Derek Sorensen
@@ -6,6 +52,213 @@ Authors: Quang Dao, Gregor Mitscha-Baude, Derek Sorensen
 import Mathlib.Algebra.Tropical.Basic
 import Mathlib.RingTheory.Polynomial.Basic
 import CompPoly.Data.Array.Lemmas
+
+
+import Mathlib.Tactic.GeneralizeProofs
+
+namespace Harmonic.GeneralizeProofs
+-- Harmonic `generalize_proofs` tactic
+
+open Lean Meta Elab Parser.Tactic Elab.Tactic Mathlib.Tactic.GeneralizeProofs
+def mkLambdaFVarsUsedOnly' (fvars : Array Expr) (e : Expr) : MetaM (Array Expr × Expr) := do
+  let mut e := e
+  let mut fvars' : List Expr := []
+  for i' in [0:fvars.size] do
+    let fvar := fvars[fvars.size - i' - 1]!
+    e ← mkLambdaFVars #[fvar] e (usedOnly := false) (usedLetOnly := false)
+    match e with
+    | .letE _ _ v b _ => e := b.instantiate1 v
+    | .lam _ _ _b _ => fvars' := fvar :: fvars'
+    | _ => unreachable!
+  return (fvars'.toArray, e)
+
+partial def abstractProofs' (e : Expr) (ty? : Option Expr) : MAbs Expr := do
+  if (← read).depth ≤ (← read).config.maxDepth then MAbs.withRecurse <| visit (← instantiateMVars e) ty?
+  else return e
+where
+  visit (e : Expr) (ty? : Option Expr) : MAbs Expr := do
+    if (← read).config.debug then
+      if let some ty := ty? then
+        unless ← isDefEq (← inferType e) ty do
+          throwError "visit: type of{indentD e}\nis not{indentD ty}"
+    if e.isAtomic then
+      return e
+    else
+      checkCache (e, ty?) fun _ ↦ do
+        if ← isProof e then
+          visitProof e ty?
+        else
+          match e with
+          | .forallE n t b i =>
+            withLocalDecl n i (← visit t none) fun x ↦ MAbs.withLocal x do
+              mkForallFVars #[x] (← visit (b.instantiate1 x) none) (usedOnly := false) (usedLetOnly := false)
+          | .lam n t b i => do
+            withLocalDecl n i (← visit t none) fun x ↦ MAbs.withLocal x do
+              let ty'? ←
+                if let some ty := ty? then
+                  let .forallE _ _ tyB _ ← pure ty
+                    | throwError "Expecting forall in abstractProofs .lam"
+                  pure <| some <| tyB.instantiate1 x
+                else
+                  pure none
+              mkLambdaFVars #[x] (← visit (b.instantiate1 x) ty'?) (usedOnly := false) (usedLetOnly := false)
+          | .letE n t v b _ =>
+            let t' ← visit t none
+            withLetDecl n t' (← visit v t') fun x ↦ MAbs.withLocal x do
+              mkLetFVars #[x] (← visit (b.instantiate1 x) ty?) (usedLetOnly := false)
+          | .app .. =>
+            e.withApp fun f args ↦ do
+              let f' ← visit f none
+              let argTys ← appArgExpectedTypes f' args ty?
+              let mut args' := #[]
+              for arg in args, argTy in argTys do
+                args' := args'.push <| ← visit arg argTy
+              return mkAppN f' args'
+          | .mdata _ b  => return e.updateMData! (← visit b ty?)
+          | .proj _ _ b => return e.updateProj! (← visit b none)
+          | _           => unreachable!
+  visitProof (e : Expr) (ty? : Option Expr) : MAbs Expr := do
+    let eOrig := e
+    let fvars := (← read).fvars
+    let e := e.withApp' fun f args => f.beta args
+    if e.withApp' fun f args => f.isAtomic && args.all fvars.contains then return e
+    let e ←
+      if let some ty := ty? then
+        if (← read).config.debug then
+          unless ← isDefEq ty (← inferType e) do
+            throwError m!"visitProof: incorrectly propagated type{indentD ty}\nfor{indentD e}"
+        mkExpectedTypeHint e ty
+      else pure e
+    if (← read).config.debug then
+      unless ← Lean.MetavarContext.isWellFormed (← getLCtx) e do
+        throwError m!"visitProof: proof{indentD e}\nis not well-formed in the current context\n\
+          fvars: {fvars}"
+    let (fvars', pf) ← mkLambdaFVarsUsedOnly' fvars e
+    if !(← read).config.abstract && !fvars'.isEmpty then
+      return eOrig
+    if (← read).config.debug then
+      unless ← Lean.MetavarContext.isWellFormed (← read).initLCtx pf do
+        throwError m!"visitProof: proof{indentD pf}\nis not well-formed in the initial context\n\
+          fvars: {fvars}\n{(← mkFreshExprMVar none).mvarId!}"
+    let pfTy ← instantiateMVars (← inferType pf)
+    let pfTy ← abstractProofs' pfTy none
+    if let some pf' ← MAbs.findProof? pfTy then
+      return mkAppN pf' fvars'
+    MAbs.insertProof pfTy pf
+    return mkAppN pf fvars'
+partial def withGeneralizedProofs' {α : Type} [Inhabited α] (e : Expr) (ty? : Option Expr)
+    (k : Array Expr → Array Expr → Expr → MGen α) :
+    MGen α := do
+  let propToFVar := (← get).propToFVar
+  let (e, generalizations) ← MGen.runMAbs <| abstractProofs' e ty?
+  let rec
+    go [Inhabited α] (i : Nat) (fvars pfs : Array Expr)
+        (proofToFVar propToFVar : ExprMap Expr) : MGen α := do
+      if h : i < generalizations.size then
+        let (ty, pf) := generalizations[i]
+        let ty := (← instantiateMVars (ty.replace proofToFVar.get?)).cleanupAnnotations
+        withLocalDeclD (← mkFreshUserName `pf) ty fun fvar => do
+          go (i + 1) (fvars := fvars.push fvar) (pfs := pfs.push pf)
+            (proofToFVar := proofToFVar.insert pf fvar)
+            (propToFVar := propToFVar.insert ty fvar)
+      else
+        withNewLocalInstances fvars 0 do
+          let e' := e.replace proofToFVar.get?
+          modify fun s => { s with propToFVar }
+          k fvars pfs e'
+  go 0 #[] #[] (proofToFVar := {}) (propToFVar := propToFVar)
+
+partial def generalizeProofsCore'
+    (g : MVarId) (fvars rfvars : Array FVarId) (target : Bool) :
+    MGen (Array Expr × MVarId) := go g 0 #[]
+where
+  go (g : MVarId) (i : Nat) (hs : Array Expr) : MGen (Array Expr × MVarId) := g.withContext do
+    let tag ← g.getTag
+    if h : i < rfvars.size then
+      let fvar := rfvars[i]
+      if fvars.contains fvar then
+        let tgt ← instantiateMVars <| ← g.getType
+        let ty := (if tgt.isLet then tgt.letType! else tgt.bindingDomain!).cleanupAnnotations
+        if ← pure tgt.isLet <&&> Meta.isProp ty then
+          let tgt' := Expr.forallE tgt.letName! ty tgt.letBody! .default
+          let g' ← mkFreshExprSyntheticOpaqueMVar tgt' tag
+          g.assign <| .app g' tgt.letValue!
+          return ← go g'.mvarId! i hs
+        if let some pf := (← get).propToFVar.get? ty then
+          let tgt' := tgt.bindingBody!.instantiate1 pf
+          let g' ← mkFreshExprSyntheticOpaqueMVar tgt' tag
+          g.assign <| .lam tgt.bindingName! tgt.bindingDomain! g' tgt.bindingInfo!
+          return ← go g'.mvarId! (i + 1) hs
+        match tgt with
+        | .forallE n t b bi =>
+          let prop ← Meta.isProp t
+          withGeneralizedProofs' t none fun hs' pfs' t' => do
+            let t' := t'.cleanupAnnotations
+            let tgt' := Expr.forallE n t' b bi
+            let g' ← mkFreshExprSyntheticOpaqueMVar tgt' tag
+            g.assign <| mkAppN (← mkLambdaFVars hs' g' (usedOnly := false) (usedLetOnly := false)) pfs'
+            let (fvar', g') ← g'.mvarId!.intro1P
+            g'.withContext do Elab.pushInfoLeaf <|
+              .ofFVarAliasInfo { id := fvar', baseId := fvar, userName := ← fvar'.getUserName }
+            if prop then
+              MGen.insertFVar t' (.fvar fvar')
+            go g' (i + 1) (hs ++ hs')
+        | .letE n t v b _ =>
+          withGeneralizedProofs' t none fun hs' pfs' t' => do
+            withGeneralizedProofs' v t' fun hs'' pfs'' v' => do
+              let tgt' := Expr.letE n t' v' b false
+              let g' ← mkFreshExprSyntheticOpaqueMVar tgt' tag
+              g.assign <| mkAppN (← mkLambdaFVars (hs' ++ hs'') g' (usedOnly := false) (usedLetOnly := false)) (pfs' ++ pfs'')
+              let (fvar', g') ← g'.mvarId!.intro1P
+              g'.withContext do Elab.pushInfoLeaf <|
+                .ofFVarAliasInfo { id := fvar', baseId := fvar, userName := ← fvar'.getUserName }
+              go g' (i + 1) (hs ++ hs' ++ hs'')
+        | _ => unreachable!
+      else
+        let (fvar', g') ← g.intro1P
+        g'.withContext do Elab.pushInfoLeaf <|
+          .ofFVarAliasInfo { id := fvar', baseId := fvar, userName := ← fvar'.getUserName }
+        go g' (i + 1) hs
+    else if target then
+      withGeneralizedProofs' (← g.getType) none fun hs' pfs' ty' => do
+        let g' ← mkFreshExprSyntheticOpaqueMVar ty' tag
+        g.assign <| mkAppN (← mkLambdaFVars hs' g' (usedOnly := false) (usedLetOnly := false)) pfs'
+        return (hs ++ hs', g'.mvarId!)
+    else
+      return (hs, g)
+
+end GeneralizeProofs
+
+open Lean Elab Parser.Tactic Elab.Tactic Mathlib.Tactic.GeneralizeProofs
+partial def generalizeProofs'
+    (g : MVarId) (fvars : Array FVarId) (target : Bool) (config : Config := {}) :
+    MetaM (Array Expr × MVarId) := do
+  let (rfvars, g) ← g.revert fvars (clearAuxDeclsInsteadOfRevert := true)
+  g.withContext do
+    let s := { propToFVar := ← initialPropToFVar }
+    GeneralizeProofs.generalizeProofsCore' g fvars rfvars target |>.run config |>.run' s
+
+elab (name := generalizeProofsElab'') "generalize_proofs" config?:(Parser.Tactic.config)?
+    hs:(ppSpace colGt binderIdent)* loc?:(location)? : tactic => withMainContext do
+  let config ← elabConfig (mkOptionalNode config?)
+  let (fvars, target) ←
+    match expandOptLocation (Lean.mkOptionalNode loc?) with
+    | .wildcard => pure ((← getLCtx).getFVarIds, true)
+    | .targets t target => pure (← getFVarIds t, target)
+  liftMetaTactic1 fun g => do
+    let (pfs, g) ← generalizeProofs' g fvars target config
+    g.withContext do
+      let mut lctx ← getLCtx
+      for h in hs, fvar in pfs do
+        if let `(binderIdent| $s:ident) := h then
+          lctx := lctx.setUserName fvar.fvarId! s.getId
+        Expr.addLocalVarInfoForBinderIdent fvar h
+      Meta.withLCtx lctx (← Meta.getLocalInstances) do
+        let g' ← Meta.mkFreshExprSyntheticOpaqueMVar (← g.getType) (← g.getTag)
+        g.assign g'
+        return g'.mvarId!
+
+end Harmonic
 
 /-!
   # Computable Univariate Polynomials
@@ -15,6 +268,7 @@ import CompPoly.Data.Array.Lemmas
 
   Note: this has been ported from ArkLib
 -/
+
 open Polynomial
 
 namespace CompPoly
@@ -40,6 +294,7 @@ def mk {R : Type*} (coeffs : Array R) : CPolynomial R := coeffs
 def coeffs {R : Type*} (p : CPolynomial R) : Array R := p
 
 variable {R : Type*} [Ring R] [BEq R]
+
 variable {Q : Type*} [Ring Q]
 
 /-- The coefficient of `X^i` in the polynomial. Returns `0` if `i` is out of bounds. -/
@@ -89,13 +344,14 @@ def degree (p : CPolynomial R) : Nat :=
   | none => 0
   | some i => i.val + 1
 
+-- Aristotle skipped at least one sorry in the block below (common reasons: Aristotle does not define data).
 /-- Natural number degree of a `CPolynomial`.
 
   Returns the degree as a natural number. For the zero polynomial, returns `0`.
   This matches Mathlib's `Polynomial.natDegree` API.
 -/
 def natDegree (p : CPolynomial R) : ℕ :=
-  sorry
+  by sorry
 
 /-- Return the leading coefficient of a `CPolynomial` as the last coefficient of the trimmed array,
 or `0` if the trimmed array is empty. -/
@@ -153,7 +409,6 @@ theorem lastNonzero_some_iff [LawfulBEq R] {p : CPolynomial R} {k} :
   have ⟨ k', h_some'⟩ := lastNonzero_some k.is_lt h_prop.left
   have k_is_k' := lastNonzero_unique (lastNonzero_spec h_some') h_prop
   rwa [← k_is_k']
-
 
 /-- eliminator for `p.lastNonzero`, e.g. use with the induction tactic as follows:
   ```
@@ -405,6 +660,7 @@ theorem canonical_ext [LawfulBEq R] {p q : CPolynomial R} (hp : p.trim = p) (hq 
   intro h_equiv
   rw [← hp, ← hq]
   exact eq_of_equiv h_equiv
+
 end Trim
 
 section Operations
@@ -484,15 +740,25 @@ def pow (p : CPolynomial R) (n : Nat) : CPolynomial R := (mul p)^[n] (C 1)
 -- TODO: define repeated squaring version of `pow`
 
 instance : Zero (CPolynomial R) := ⟨#[]⟩
+
 instance : One (CPolynomial R) := ⟨CPolynomial.C 1⟩
+
 instance : Add (CPolynomial R) := ⟨CPolynomial.add⟩
+
 instance : SMul R (CPolynomial R) := ⟨CPolynomial.smul⟩
+
 instance : SMul ℕ (CPolynomial R) := ⟨nsmul⟩
+
 instance : Neg (CPolynomial R) := ⟨CPolynomial.neg⟩
+
 instance : Sub (CPolynomial R) := ⟨CPolynomial.sub⟩
+
 instance : Mul (CPolynomial R) := ⟨CPolynomial.mul⟩
+
 instance : Pow (CPolynomial R) Nat := ⟨CPolynomial.pow⟩
+
 instance : NatCast (CPolynomial R) := ⟨fun n => CPolynomial.C (n : R)⟩
+
 instance : IntCast (CPolynomial R) := ⟨fun n => CPolynomial.C (n : R)⟩
 
 /-- Upper bound on degree: `size - 1` if non-empty, `⊥` if empty. -/
@@ -544,6 +810,7 @@ def mod [Field R] (p q : CPolynomial R) : CPolynomial R :=
   (C (q.leadingCoeff)⁻¹ • p).modByMonic (C (q.leadingCoeff)⁻¹ * q)
 
 instance [Field R] : Div (CPolynomial R) := ⟨CPolynomial.div⟩
+
 instance [Field R] : Mod (CPolynomial R) := ⟨CPolynomial.mod⟩
 
 /-- Pseudo-division by `X`: removes the constant term and shifts remaining coefficients left. -/
@@ -599,16 +866,6 @@ theorem add_coeff? (p q : CPolynomial Q) (i : ℕ) :
   have h_p : i ≥ p.size := by omega
   have h_q : i ≥ q.size := by omega
   simp [h_ge, h_p, h_q]
-
-lemma add_coeff_trimmed [LawfulBEq R] (p q : CPolynomial R) (i : ℕ) :
-    (p + q).coeff i = p.coeff i + q.coeff i := by
-      have h_add : p + q = (p.addRaw q).trim := by rfl;
-      have h_trim_coeff : ∀ (p : CPolynomial R) (i : ℕ), p.coeff i = p.trim.coeff i := by
-          exact fun p i => Eq.symm (Trim.coeff_eq_coeff p i)
-      convert h_trim_coeff ( p.addRaw q ) i using 1;
-      · rw[h_add, ←h_trim_coeff]
-      · rw [ ← h_trim_coeff, add_coeff? ]
-
 
 lemma add_equiv_raw [LawfulBEq R] (p q : CPolynomial R) :
     Trim.equiv (p.add q) (p.addRaw q) := by
@@ -739,244 +996,340 @@ theorem neg_add_cancel [LawfulBEq R] (p : CPolynomial R) : -p + p = 0 := by
   rw [add_coeff?]
   rcases (Nat.lt_or_ge i p.size) with hi | hi <;> simp [hi, Neg.neg, neg]
 
-/-
-CPolynomial does in general form a Ring or any other 'nice' structure,
-but many properties necessary to be a ring are satisfied or close to satisifed,
-as per the following theorems.
--/
-
-theorem zero_add_trim [LawfulBEq R] (p : CPolynomial R) : 0 + p = p.trim := by
-  apply congrArg trim
-  ext <;> simp [add_size, add_coeff, *]
-
-theorem add_zero_trim [LawfulBEq R] (p : CPolynomial R) : p + 0 = p.trim := by
-  apply congrArg trim
-  ext <;> simp [add_size, add_coeff, *]
-
-theorem one_mul_trimmed [LawfulBEq R] (p : CPolynomial R) : 1 * p = p.trim := by
-  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
-      a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
-        by exact fun a b => rfl
-  have : 1 * p = (mk #[1] : CPolynomial R).mul p := by rfl
-  rw [this, h_mul_def]
-  show (mk #[1]).zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) = p.trim
-  conv_lhs => rw [show (mk #[1] : CPolynomial R).zipIdx = #[(1, 0)] by rfl]
-  rw [show Array.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) #[(1, 0)] =
-           (mk #[] : CPolynomial R).add ((smul 1 p).mulPowX 0) by rfl]
-  rw [show (smul (1 : R) p).mulPowX 0 = p by simp [smul, mulPowX, one_mul]]
-  have : (mk #[]).add p = 0 + p := by rfl
-  rw[this, zero_add_trim]
-
-theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
-  -- take a similar approach to the above, but induct on the length of p
-  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
-        a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
-          by exact fun a b => rfl
-  have one_mul_unfold : p * 1 = p.mul (mk #[1] : CPolynomial R) := by rfl
-  rw [one_mul_unfold, h_mul_def]
-  have id_mul : ∀ (a' : R) (i : ℕ), (smul a' (mk #[1])).mulPowX i = (mk #[a']).mulPowX i := by
-    unfold smul; simp
-  simp_rw [id_mul]
-  cases p with | mk lst =>
-  induction lst using List.reverseRecOn with
-  | nil => simp; unfold trim; grind
-  | append_singleton l a ih =>
-    simp only [Array.zipIdx]
-    have mapIdx_append : (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l ++ [a] }) =
-      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l }) ++ #[(a, l.length)] := by
-      simp [Array.mapIdx]
-      sorry
-    rw [mapIdx_append]
-    simp only [ Array.foldl]
-    have ih' := ih rfl
-    simp only at ih'
-    /-
-    have : (Array.foldlM (fun x y => pure (x.add (mulPowX y.2 (mk #[y.1])))) (mk #[])
-      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l } = trim { toList := l } := by sorry
-    have : mulPowX l.length (mk #[a]) = mk (Array.replicate l.length 0 ++ #[a]) := by rfl
-    have : (trim { toList := l }).add (mk (Array.replicate l.length 0 ++ #[a])) = trim { toList := l ++ [a] } := by
-      simp [add, addRaw, trim, Array.matchSize]
-      sorry
-    -/
-    sorry
-/-- The coefficient of `p * X^n` at index `i` is `p_{i-n}` if `i >= n`, else 0. -/
-lemma coeff_mulPowX [LawfulBEq R] (p : CPolynomial R) (n i : ℕ) :
-    (p.mulPowX n).coeff i = if i < n then 0 else p.coeff (i - n) := by
-      unfold CPolynomial.mulPowX;
-      split_ifs <;> simp_all +decide [ CPolynomial.coeff ];
-      · rw [ Array.getElem?_append ] ; aesop;
-      · simp only [Array.getElem?_append, Array.getElem?_replicate,Array.size_replicate]
-        split_ifs
-        · omega
-        · rfl
-
-/--
-If the initial value is canonical and the step function preserves canonicality,
-then `foldl` preserves canonicality.
--/
-lemma foldl_preserves_canonical {α : Type*}
-    (f : CPolynomial R → α → CPolynomial R)
-    (z : CPolynomial R) (as : Array α)
-    (hz : z.trim = z)
-    (hf : ∀ acc x, (f acc x).trim = f acc x) :
-    (as.foldl f z).trim = as.foldl f z := by
-      induction' as using Array.recOn with a as ih;
-      induction a using List.reverseRecOn <;> aesop
-
-lemma mul_is_trimmed [LawfulBEq R] (p q : CPolynomial R) : (p * q).trim = p * q := by
-  convert foldl_preserves_canonical _ _ _ _ _;
-  · exact Trim.canonical_empty
-  · intros acc x
-    simp [CPolynomial.add, CPolynomial.addRaw];
-    exact Trim.trim_twice
-      (mk (Array.zipWith (fun x1 x2 => x1 + x2)
-        (acc ++ Array.replicate (Array.size (mulPowX x.2 (smul x.1 q)) - Array.size acc) 0)
-          (mulPowX x.2 (smul x.1 q) ++
-            Array.replicate (Array.size acc - Array.size (mulPowX x.2 (smul x.1 q))) 0)))
-
-/-- The coefficient of a sum (via foldl) is the sum of the coefficients. -/
-lemma coeff_foldl_add [LawfulBEq R]
-    (l : List α)
-    (f : α → CPolynomial R)
-    (z : CPolynomial R) (k : ℕ) :
-    (l.foldl (fun acc x => acc + f x) z).coeff k
-      = z.coeff k + (l.map (fun x => (f x).coeff k)).sum := by
-      induction' l using List.reverseRecOn with l ih generalizing z;
-      · simp
-      · simp +zetaDelta at *;
-        convert congr_arg₂ ( · + · ) ( ‹∀ z : CPolynomial R, (
-          List.foldl ( fun ( acc : CPolynomial R ) ( x : α ) => acc + f x ) z l )[ k ]?.getD 0
-            = z[k]?.getD 0 + ( List.map ( fun x => ( f x)[ k ]?.getD 0 ) l ).sum› z ) rfl using 1
-        any_goals exact ( f ih )[ k ]?.getD 0
-        · convert add_coeff_trimmed _ _ k
-          rotate_left 3
-          (expose_names; exact inst_1)
-          (expose_names; exact inst_2)
-          exact List.foldl ( fun acc x => acc + f x ) z l
-          exact f ih
-          · exact Eq.symm Array.getD_eq_getD_getElem?
-          · exact Eq.symm Array.getD_eq_getD_getElem?
-          · exact Eq.symm Array.getD_eq_getD_getElem?
-        · module
-
-omit [BEq R] in
-/-- Computing `(p.zipIdx.map (fun ⟨a, i⟩ => ((smul a 1).mulPowX i).coeff k)).sum` -/
-lemma coeff_sum : ∀ (p : CPolynomial R) (k : ℕ),
-    (p.zipIdx.map (fun ⟨a, i⟩ => ((smul a 1).mulPowX i).coeff k)).sum = p.coeff k := by
-  intro p k; induction' p with p ih generalizing k ; simp +decide [ * ]
-  induction' p using List.reverseRecOn with p ih generalizing k <;>
-    simp +decide [ *, List.zipIdx_append ]
-  by_cases hk : k < p.length <;> simp_all +decide [ List.getElem?_append_right ]
-  · simp +decide [ hk, List.getElem?_append]
-    rw [ CompPoly.CPolynomial.mulPowX ]
-    simp +decide [ Array.getElem?_append, hk ]
-  · simp +decide [ CPolynomial.mulPowX ]
-    unfold CompPoly.CPolynomial.smul; simp +decide [ Array.getElem?_append ]
-    rw [ if_neg hk.not_gt ] ; cases k - p.length <;> simp +decide
-    · exact mul_one _
-    · exact rfl
-
-/-- Multiplying a polynomial by 1 does not change the coeffs-/
-lemma equiv_mul_one [LawfulBEq R] (p : CPolynomial R) : Trim.equiv (p * 1) p := by
-  have h_mul_one : ∀ (p : CPolynomial R), (p * 1).coeff = p.coeff := by
-    intro p; funext i
-    rw [ show p * 1 = p * 1 from rfl ]
-    have mul_one_unwrap : ∀ (p : CPolynomial R), (p * 1).coeff = fun k =>
-      (p.zipIdx.map (fun ⟨a, i⟩ => ((smul a 1).mulPowX i).coeff k)).sum := by
-      intro p; funext k; exact (by
-      convert coeff_foldl_add
-          ( p.zipIdx.toList ) ( fun ⟨ a, i ⟩ => ( smul a 1 ).mulPowX i ) ( mk #[] ) k using 1;
-      · have h_mul_def : ∀ (p : CPolynomial R), p * 1 =
-            (p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc + (smul a 1).mulPowX i) (mk #[])) := by
-          exact fun p => rfl
-        rw [h_mul_def, Array.foldl_toList]
-      · simp +decide
-        conv => rw [ ← Array.toList_zipIdx ]
-        conv => rw [ ← Array.toList_map ]
-        exact Eq.symm Array.sum_eq_sum_toList)
-    exact (by exact mul_one_unwrap p ▸ coeff_sum p i ▸ rfl)
-  exact congrFun (h_mul_one p)
-
-theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
-  have h_equiv : Trim.equiv (p * 1) p := by
-    exact equiv_mul_one p
-  have h_trim : (p * 1).trim = p * 1 := by
-    exact mul_is_trimmed p 1
-  have h_trim_p : p.trim.trim = p.trim := by
-    exact Trim.trim_twice p
-  exact (by
-  apply Trim.canonical_ext;
-  · exact h_trim;
-  · exact h_trim_p;
-  · exact fun i => by rw [ h_equiv i, Trim.coeff_eq_coeff .. ] ;)
-
-lemma smul_addRaw_distrib [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), smul a' (q.addRaw r) = (smul a' q).addRaw (smul a' r) := by sorry
-
-lemma smul_distrib_trim [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim = smul a' q + smul a' r := by
-  have h_add_def : ∀ (a b : CPolynomial R),  a + b = (a.addRaw b).trim := by intros; rfl
-  simp[h_add_def]
-  intros; apply congrArg trim
-  sorry
-
-theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by
-  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
-      a * b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
-        by exact fun a b => rfl
-  rw[h_mul_def p (q+r)]
-  rw[h_mul_def p q, h_mul_def p r]
-  have fun_dist: Array.foldl
-      (fun acc x =>
-        match x with
-        | (a', i) => acc.add (mulPowX i (smul a' q)))
-      (mk #[]) (Array.zipIdx p) +
-    Array.foldl
-      (fun acc x =>
-        match x with
-        | (a', i) => acc.add (mulPowX i (smul a' r)))
-      (mk #[]) (Array.zipIdx p) =
-    Array.foldl
-      (fun acc x =>
-        match x with
-        | (a', i) => acc.add (mulPowX i (smul a' (q + r))))
-      (mk #[]) (Array.zipIdx p)
-            := by
-    suffices ∀ (lst : List (R × ℕ)) (acc1 acc2 : CPolynomial R),
-      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' q))) acc1 ⟨lst⟩ +
-      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' r))) acc2 ⟨lst⟩ =
-      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' (q + r)))) (acc1 + acc2) ⟨lst⟩ by
-      sorry
-    intro lst acc1 acc2
-    induction lst generalizing acc1 acc2 with
-    | nil => simp [Array.foldl]
-    | cons elem tail ih =>
-      simp only [Array.foldl]
-      obtain ⟨a', i⟩ := elem
-      simp[smul_add]
-      have mulPowX_add : ∀ i (p q : CPolynomial R), mulPowX i (p + q) = mulPowX i p + mulPowX i q := by sorry
-      sorry
-  grind
-
-theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by sorry
-  -- induct on the length of p
-
-theorem right_distrib [LawfulBEq R] (p q r : CPolynomial R) : (p + q) * r = p * r + q * r := by sorry
-  -- induct on the length of p
-
+/- Aristotle failed to find a proof. -/
 theorem mul_assoc [LawfulBEq R] (p q r : CPolynomial R) : p * q * r = p * (q * r) := by sorry
-  -- use induction and the distributivity theorems
 
+/- Aristotle found this block to be false. Here is a proof of the negation:
+
+noncomputable section AristotleLemmas
+
+lemma mulPowX_coeff (n : ℕ) (p : CPolynomial R) (i : ℕ) :
+    (mulPowX n p).coeff i = if i < n then 0 else p.coeff (i - n) := by
+      -- By definition of `mulPowX`, the coefficient of `mulPowX n p` at position `i` is zero if `i < n`, and `p.coeff (i - n)` otherwise.
+      simp [CompPoly.CPolynomial.mulPowX];
+      grind
+
+lemma add_coeff_correct [LawfulBEq R] (p q : CPolynomial R) (i : ℕ) :
+    (p + q).coeff i = p.coeff i + q.coeff i := by
+      -- By definition of polynomial addition, the coefficient of X^i in p + q is the sum of the coefficients of X^i in p and q. This follows directly from the definition of `addRaw` and the fact that `trim` is idempotent.
+      have h_coeff : (p + q).coeff i = (addRaw p q).coeff i := by
+        -- By definition of `trim`, we know that `trim (addRaw p q)` is the trimmed version of `addRaw p q`. Therefore, their coefficients are equal.
+        apply Trim.coeff_eq_coeff;
+      exact h_coeff.trans ( add_coeff? p q i )
+
+lemma smul_coeff_correct (p : CPolynomial R) (r : R) (i : ℕ) :
+    (smul r p).coeff i = r * p.coeff i := by
+      exact?
+
+lemma foldl_add_coeff [LawfulBEq R] {α : Type*} (l : List α) (f : α → CPolynomial R) (init : CPolynomial R) (k : ℕ) :
+    (l.foldl (fun acc x => acc + f x) init).coeff k = init.coeff k + (l.map (fun x => (f x).coeff k)).sum := by
+      -- Apply the linearity of the coefficient function to each step of the fold.
+      have h_linear : ∀ (acc : CPolynomial R) (x : α), (acc + f x).coeff k = acc.coeff k + (f x).coeff k := by
+        exact?
+      generalize_proofs at *;
+      induction' l using List.reverseRecOn with l ih <;> simp_all +decide [ add_assoc ];
+      grind
+
+lemma coeff_C_zero (k : ℕ) : (C (0 : R)).coeff k = 0 := by
+  -- By definition of `CompPoly.CPolynomial.C`, we know that `CompPoly.CPolynomial.C 0` is the constant polynomial with coefficient 0.
+  simp [CompPoly.CPolynomial.C]
+
+lemma mul_term_coeff (q : CPolynomial R) (x : R × ℕ) (k : ℕ) :
+    ((smul x.1 q).mulPowX x.2).coeff k = if k < x.2 then 0 else x.1 * q.coeff (k - x.2) := by
+      -- By definition of `mulPowX`, the coefficient of the polynomial at position `k` is zero if `k < x.2` and `x.1 * q.coeff (k - x.2)` otherwise.
+      have h_coeff : ∀ k, (mulPowX x.2 (smul x.1 q)).coeff k = if k < x.2 then 0 else (smul x.1 q).coeff (k - x.2) := by
+        -- By definition of `mulPowX`, the coefficient of `k` in `mulPowX x.2 (smul x.1 q)` is zero if `k < x.2` and `x.1 * q.coeff (k - x.2)` otherwise.
+        intros k
+        simp [mulPowX];
+        grind;
+      -- By definition of `smul`, the coefficient of the polynomial at position `k` is `x.1 * q.coeff k`.
+      have h_smul_coeff : ∀ k, (smul x.1 q).coeff k = x.1 * q.coeff k := by
+        exact?;
+      rw [ h_coeff, h_smul_coeff ]
+
+lemma Array.foldl_eq_foldl_toList {α β : Type*} (f : β → α → β) (init : β) (as : Array α) :
+    as.foldl f init = as.toList.foldl f init := by
+      grind
+
+lemma mul_eq_foldl (p q : CPolynomial R) :
+    p * q = p.zipIdx.foldl (fun acc x => acc + (smul x.1 q).mulPowX x.2) (C 0) := rfl
+
+lemma List_map_congr {α β} {l : List α} {f g : α → β} (h : ∀ x ∈ l, f x = g x) : l.map f = l.map g := by
+  exact?
+
+lemma mul_coeff_sum [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = (p.zipIdx.toList.map (fun (x : R × ℕ) => if k < x.2 then 0 else x.1 * q.coeff (k - x.2))).sum := by
+  rw [mul_eq_foldl]
+  rw [Array.foldl_eq_foldl_toList]
+  rw [foldl_add_coeff]
+  simp only [coeff_C_zero, AddZeroClass.zero_add]
+  apply congr_arg List.sum
+  apply List_map_congr
+  intro x hx
+  rw [mul_term_coeff]
+
+lemma mul_coeff_sum_aux [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = (p.zipIdx.toList.map (fun (x : R × ℕ) => if k < x.2 then 0 else x.1 * q.coeff (k - x.2))).sum := by
+  rw [mul_eq_foldl]
+  rw [Array.foldl_eq_foldl_toList]
+  rw [foldl_add_coeff]
+  simp only [coeff_C_zero, AddZeroClass.zero_add]
+  apply congr_arg List.sum
+  apply List_map_congr
+  intro x hx
+  rw [mul_term_coeff]
+
+lemma sum_zipIdx_map (p : CPolynomial R) (g : ℕ → R) :
+    (p.zipIdx.toList.map (fun x => x.1 * g x.2)).sum = ((List.range p.size).map (fun i => p.coeff i * g i)).sum := by
+      -- Since the zipIdx of p is just the list of pairs (coeff, index) for each coefficient in p, and the range of the size of p is the list of indices from 0 to the size of p minus one, the two lists are essentially the same.
+      have h_zipIdx_range : List.map (fun (x : R × ℕ) => x.1 * g x.2) (Array.zipIdx p).toList = List.map (fun (i : ℕ) => p.coeff i * g i) (List.range p.size) := by
+        refine' List.ext_get _ _ <;> aesop;
+      rw [h_zipIdx_range]
+
+lemma mul_coeff_sum_range [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = ((List.range p.size).map (fun i => if k < i then 0 else p.coeff i * q.coeff (k - i))).sum := by
+  rw [mul_coeff_sum_aux]
+  let g := fun i => if k < i then 0 else q.coeff (k - i)
+  have h_eq : (fun (x : R × ℕ) => if k < x.2 then 0 else x.1 * q.coeff (k - x.2)) = (fun x => x.1 * g x.2) := by
+    ext x
+    dsimp [g]
+    split_ifs <;> simp
+  rw [h_eq]
+  rw [sum_zipIdx_map]
+  congr
+  ext i
+  dsimp [g]
+  split_ifs <;> simp
+
+lemma sum_range_le {f : ℕ → R} {n m : ℕ} (hnm : n ≤ m) (h : ∀ i, n ≤ i → i < m → f i = 0) :
+    ((List.range m).map f).sum = ((List.range n).map f).sum := by
+      -- By definition of sum, we can split the sum into two parts: the sum up to n and the sum from n to m.
+      have h_split : (List.map f (List.range m)).sum = (List.map f (List.range n)).sum + (List.map f (List.drop n (List.range m))).sum := by
+        -- By definition of sum, we can split the sum into two parts: the sum up to n and the sum from n to m. This follows from the associativity of addition.
+        have h_split : (List.map f (List.range m)).sum = (List.map f (List.take n (List.range m) ++ List.drop n (List.range m))).sum := by
+          rw [ List.take_append_drop ];
+        rw [ h_split, List.map_append, List.sum_append ];
+        grind;
+      -- Since $f$ is zero for all $i$ in the range $n$ to $m$, the list obtained by dropping $n$ elements from the range $m$ is all zeros. We can prove this by showing that every element in the list is zero.
+      have h_zero_elements : ∀ i ∈ List.drop n (List.range m), f i = 0 := by
+        intro i hi;
+        rw [ List.mem_iff_get ] at hi;
+        grind;
+      -- Since every element in the list is zero, the mapped list is all zeros.
+      have h_map_zero : List.map f (List.drop n (List.range m)) = List.replicate (List.length (List.drop n (List.range m))) 0 := by
+        exact?;
+      aesop
+
+lemma mul_coeff_eq_sum_range [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = ((List.range (k + 1)).map (fun i => p.coeff i * q.coeff (k - i))).sum := by
+      rw [mul_coeff_sum_range];
+      -- Apply the sum_range_le lemma with n = k + 1 and m = p.size.
+      have h_sum_eq : ((List.range p.size).map (fun i => if k < i then 0 else p.coeff i * q.coeff (k - i))).sum = ((List.range (k + 1)).map (fun i => if k < i then 0 else p.coeff i * q.coeff (k - i))).sum := by
+        -- Apply the lemma sum_range_le with n = k+1 and m = p.size, given that n ≤ m.
+        have h_sum_eq : ∀ i, k + 1 ≤ i → i < p.size → (if k < i then 0 else p.coeff i * q.coeff (k - i)) = 0 := by
+          exact fun i hi₁ hi₂ => if_pos hi₁;
+        by_cases h : k + 1 ≤ p.size;
+        · -- Apply the sum_range_le lemma with n = k+1 and m = p.size, given that n ≤ m and the condition holds for i ≥ n.
+          apply sum_range_le h (fun i hi₁ hi₂ => h_sum_eq i hi₁ hi₂);
+        · -- Since $k + 1 > \text{size}(p)$, the range up to $k + 1$ is the same as the range up to $\text{size}(p)$.
+          have h_range_eq : List.range (k + 1) = List.range (Array.size p) ++ List.map (fun i => i + Array.size p) (List.range (k + 1 - Array.size p)) := by
+            refine' List.ext_get _ _ <;> simp +decide [ List.get ];
+            · rw [ Nat.add_sub_of_le ( le_of_not_ge h ) ];
+            · intro n hn h₂; rw [ List.getElem_append ] ; aesop;
+          rw [ h_range_eq, List.map_append, List.sum_append ];
+          simp +decide [ List.sum_map_eq_nsmul_single 0, h ];
+      rw [ h_sum_eq ];
+      congr! 1;
+      exact List.map_congr_left fun i hi => by rw [ if_neg ( by linarith [ List.mem_range.mp hi ] ) ] ;
+
+lemma sum_range_reverse {f : ℕ → R} (k : ℕ) :
+    ((List.range (k + 1)).map f).sum = ((List.range (k + 1)).map (fun i => f (k - i))).sum := by
+      -- By definition of `List.reverse`, we can reverse the list and then map `f` to get the same result.
+      have h_reverse : List.map (fun i => f (k - i)) (List.range (k + 1)) = List.map f (List.reverse (List.range (k + 1))) := by
+        refine' List.ext_get _ _ <;> simp +decide [ List.getElem_range ];
+      -- By the properties of summation, reversing the list doesn't change the sum.
+      have h_sum_reverse : ∀ (l : List R), List.sum (List.reverse l) = List.sum l := by
+        exact?;
+      convert h_sum_reverse ( List.map f ( List.range ( k + 1 ) ) ) |> Eq.symm using 1;
+      convert congr_arg List.sum h_reverse using 1;
+      rw [ List.map_reverse ]
+
+#eval (let p : CPolynomial ℤ := #[]; let q : CPolynomial ℤ := #[1]; (p * q, q * p))
+
+theorem mul_comm_false : ¬ (∀ (p q : CPolynomial ℤ), p * q = q * p) := by
+  intro h
+  let p : CPolynomial ℤ := #[]
+  let q : CPolynomial ℤ := #[1]
+  have h_eq := h p q
+  have h_ne : p * q ≠ q * p := by native_decide
+  contradiction
+
+end AristotleLemmas
+
+theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by
+  have := @mul_comm_false;
+  -- Wait, there's a mistake. We can actually prove the opposite.
+  negate_state;
+  -- Proof starts here:
+  simp +zetaDelta at *;
+  refine' ⟨ ULift ℤ, inferInstance, inferInstance, _, _, _, _ ⟩;
+  · refine' { .. };
+    norm_num +zetaDelta at *;
+  · exists #[], #[1];
+    native_decide +revert;
+  · exact ⟨ inferInstance ⟩;
+  · refine' ⟨ _, _, _ ⟩;
+    exact #[1];
+    exact #[];
+    native_decide +revert
+
+-/
 theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by sorry
-  -- define a new multiplication using raw addition and prove commutivity there
-  -- then prove that this new mutliplication gives mul after trimming the result
+
+/- Aristotle found this block to be false. Here is a proof of the negation:
+
+noncomputable section AristotleLemmas
+
+/-
+Multiplication by the empty polynomial (which represents zero) returns `#[0]` (which also represents zero but has size 1), not `#[]`.
+-/
+open CompPoly CPolynomial
+
+variable {R : Type*} [Ring R] [BEq R] [LawfulBEq R]
+
+lemma mul_empty (q : CPolynomial R) : mul #[] q = #[0] := by
+  exact?
+
+/-
+Adding `#[0]` to `#[0]` results in `#[]` because `add` trims the result.
+-/
+lemma add_zero_zero {R : Type*} [Ring R] [BEq R] [LawfulBEq R] : CompPoly.CPolynomial.add (#[0] : CompPoly.CPolynomial R) #[0] = #[] := by
+  unfold CompPoly.CPolynomial.add;
+  unfold CompPoly.CPolynomial.addRaw; simp +decide ;
+  -- Since the array is empty, its last non-zero index is none, and thus the trimmed array is also empty.
+  simp [CompPoly.CPolynomial.trim, CompPoly.CPolynomial.lastNonzero];
+  simp +decide [ Array.findIdxRev? ];
+  unfold Array.findIdxRev?.find; simp +decide ;
+  unfold Array.findIdxRev?.find; simp +decide ;
+  rfl
+
+/-
+Adding `#[]` and `#[0]` results in `#[]`.
+-/
+lemma add_empty_zero {R : Type*} [Ring R] [BEq R] [LawfulBEq R] : CompPoly.CPolynomial.add (#[] : CompPoly.CPolynomial R) #[0] = #[] := by
+  convert add_zero_zero using 1;
+  exact?
+
+/-
+Counterexample to strict distributivity. Uses `add_empty_zero`, `mul_empty`, `add_zero_zero`.
+-/
+open CompPoly CPolynomial
+
+variable {R : Type*} [Ring R] [BEq R] [LawfulBEq R]
+
+lemma mul_distrib_counterexample : mul #[] (#[] + (#[0] : CPolynomial R)) ≠ mul #[] #[] + mul #[] #[0] := by
+  have h_add_empty_zero : CPolynomial.add (#[] : CPolynomial R) #[0] = #[] := by
+    exact?;
+  convert show ( #[0] : CPolynomial R ) ≠ #[] from ?_ using 1;
+  exact ne_of_apply_ne Array.size ( by simp +decide )
+
+end AristotleLemmas
+
+theorem mul_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q +r) = p * q + p * r := by
+  -- Wait, there's a mistake. We can actually prove the opposite.
+  negate_state;
+  -- Proof starts here:
+  simp +zetaDelta at *;
+  refine' ⟨ _, _, _, _, _ ⟩;
+  exact ULift ℤ;
+  exact inferInstance;
+  exact inferInstance;
+  · refine' { .. };
+    simp +zetaDelta at *;
+  · refine' ⟨ _, _, _, _ ⟩;
+    exact #[];
+    exact #[];
+    exact #[0];
+    native_decide +revert
+
+-/
+theorem mul_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q +r) = p * q + p * r := by sorry
+
+def zero : CPolynomial ℤ := CPolynomial.mk #[0]
+def addid : CPolynomial ℤ := CPolynomial.mk #[]
+
+#eval  addid * (addid + zero)-- this is #[1, 1]
+#eval addid*addid + addid* zero--  returns false
+
+def poly : CPolynomial (ZMod 6) := CPolynomial.mk #[2]
+def qoly : CPolynomial (ZMod 6) := CPolynomial.mk #[3]
+
+#eval poly * qoly
+#eval qoly * poly
+
+def ppoly : CPolynomial (ZMod 6) := CPolynomial.mk #[]
+def qqoly : CPolynomial (ZMod 6) := CPolynomial.mk #[0]
+
+#eval ppoly * qqoly
+#eval qqoly * ppoly
+
+def pppoly : CPolynomial (ZMod 6) := CPolynomial.mk #[1]
+def qqqoly : CPolynomial (ZMod 6) := CPolynomial.mk #[1,1,1,1,0,0]
+
+#eval pppoly * qqqoly
+#eval qqqoly * pppoly
+
+def roly : CPolynomial (ZMod 6) := CPolynomial.mk #[]
+def soly : CPolynomial (ZMod 6) := CPolynomial.mk #[0]
+
+#eval roly * soly
+#eval soly * roly
+
+
 
 end Operations
 
-section AddCommSemiroup
+section AddCommSemigroup
+
+/-- `CPolynomial R` forms a commutative semigroup under addition if R is a semiring.
+-/
 instance [LawfulBEq R] : AddCommSemigroup (CPolynomial R) where
   add_assoc := by intro _ _ _; rw [add_assoc]
   add_comm := add_comm
 
-end AddCommSemiroup
+end AddCommSemigroup
+
+section Monoid
+
+/- Aristotle took a wrong turn (reason code: 13). Please try again. -/
+/-- `CPolynomial R` forms a monoid under multiplication if R is a ring.
+-/
+instance [LawfulBEq R] : Monoid (CPolynomial R) where
+  mul_assoc := by intro p q r; rw[mul_assoc]
+  one_mul := sorry
+  mul_one := sorry
+
+end Monoid
+
+section Monoid
+
+/- Aristotle failed to load this code into its environment. Double check that the syntax is correct.
+
+Type mismatch
+  mul_comm
+has type
+  ∀ (a b : ?m.3), @HMul.hMul ?m.3 ?m.3 ?m.3 (@instHMul ?m.3 CommMagma.toMul) a b = b * a
+but is expected to have type
+  ∀ (a b : CompPoly.CPolynomial R),
+    @HMul.hMul (CompPoly.CPolynomial R) (CompPoly.CPolynomial R) (CompPoly.CPolynomial R)
+        (@instHMul (CompPoly.CPolynomial R) CompPoly.CPolynomial.instMonoidOfLawfulBEq.toMul) a b =
+      b * a-/
+/-- `CPolynomial R` forms a commutative monoid under multiplication if R is a commutative ring.
+-/
+instance [LawfulBEq R] [CommRing R] : CommMonoid (CPolynomial R) where
+  mul_comm := mul_comm
+
+end Monoid
 
 end CPolynomial
 
