@@ -103,6 +103,8 @@ def leadingCoeff (p : CPolynomial R) : R := p.trim.getLastD 0
 
 namespace Trim
 
+
+
 /-- If all coefficients are zero, `lastNonzero` is `none`. -/
 theorem lastNonzero_none [LawfulBEq R] {p : CPolynomial R} :
     (∀ i, (hi : i < p.size) → p[i] = 0) → p.lastNonzero = none := by
@@ -475,7 +477,7 @@ def mulX (p : CPolynomial R) : CPolynomial R := p.mulPowX 1
 /-- Multiplication using the naive `O(n²)` algorithm: `Σᵢ (aᵢ * q) * X^i`. -/
 @[inline, specialize]
 def mul (p q : CPolynomial R) : CPolynomial R :=
-  p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc.add <| (smul a q).mulPowX i) (mk #[])
+  p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc.add <| (smul a q).mulPowX i) (C 0)
 
 /-- Exponentiation of a `CPolynomial` by a natural number `n` via repeated multiplication. -/
 @[inline, specialize]
@@ -494,6 +496,11 @@ instance : Mul (CPolynomial R) := ⟨CPolynomial.mul⟩
 instance : Pow (CPolynomial R) Nat := ⟨CPolynomial.pow⟩
 instance : NatCast (CPolynomial R) := ⟨fun n => CPolynomial.C (n : R)⟩
 instance : IntCast (CPolynomial R) := ⟨fun n => CPolynomial.C (n : R)⟩
+
+def poly1 : CPolynomial ℤ := CPolynomial.mk #[1]
+def poly2 : CPolynomial ℤ := CPolynomial.mk #[]
+
+#eval poly2 * poly1
 
 /-- Upper bound on degree: `size - 1` if non-empty, `⊥` if empty. -/
 def degreeBound (p : CPolynomial R) : WithBot Nat :=
@@ -1248,10 +1255,79 @@ theorem mul_assoc [LawfulBEq R] (p q r : CPolynomial R) : p * q * r = p * (q * r
   · exact mul_is_trimmed p (q * r)
   · exact mul_assoc_equiv p q r
 
-theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by sorry
-  -- define a new multiplication using raw addition and prove commutivity there
-  -- then prove that this new mutliplication gives mul after trimming the result
 
+omit [BEq R] in
+/-- The convolution sum is symmetric under reversal of the range. -/
+lemma sum_range_reverse [CommRing R] (p q : CPolynomial R) (k : ℕ) :
+    (Finset.range (k + 1)).sum (fun i => p.coeff i * q.coeff (k - i)) =
+    (Finset.range (k + 1)).sum (fun j => p.coeff (k - j) * q.coeff j) := by
+  -- sum_range_reflect: Σ_{j < n} f(n-1-j) = Σ_{j < n} f(j)
+  -- For n = k+1: Σ_{j < k+1} f(k-j) = Σ_{j < k+1} f(j)
+  -- We want to show: Σ p[i]*q[k-i] = Σ p[k-j]*q[j]
+  -- The RHS has the "reflected" form, so apply reflect to get LHS form
+  rw [← Finset.sum_range_reflect (fun j => p.coeff (k - j) * q.coeff j) (k + 1)]
+  apply Finset.sum_congr rfl
+  intro j hj
+  simp only [Finset.mem_range] at hj
+  -- j < k + 1 means j ≤ k
+  have hj' : j ≤ k := Nat.lt_succ_iff.mp hj
+  -- Goal: p.coeff (k - (k - j)) * q.coeff (k - j) = p.coeff j * q.coeff (k - j)
+  -- Use Nat.sub_sub_self: k - (k - j) = j when j ≤ k
+  simp only [Nat.add_sub_cancel, Nat.sub_sub_self hj']
+
+omit [BEq R] in
+/-- Using commutativity of R to swap the multiplication order. -/
+lemma mul_coeff_comm [CommRing R]  (p q : CPolynomial R) (k : ℕ) :
+    (Finset.range (k + 1)).sum (fun i => p.coeff i * q.coeff (k - i)) =
+    (Finset.range (k + 1)).sum (fun i => q.coeff i * p.coeff (k - i)) := by
+  -- Step 1: Reverse the sum (substitute j = k - i)
+  rw [sum_range_reverse]
+  -- Step 2: Use commutativity in R
+  apply Finset.sum_congr rfl
+  intro j _
+  ring_nf  -- or: rw [mul_comm]
+
+/-- Coefficients of p * q and q * p are equal. -/
+theorem mul_comm_coeff [CommRing R] [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = (q * p).coeff k := by sorry
+  /-
+  have h_mul_coeff :
+    (p * q).coeff k = (Finset.range (k + 1)).sum (fun i => p.coeff i * q.coeff (k - i)) := by
+    rw [@mul_coeff_range_size R _ _ p q k, @sum_range_extend R _ p q k]
+  have h_mul_coeff2 :
+    (q * p).coeff k = (Finset.range (k + 1)).sum (fun i => q.coeff i * p.coeff (k - i)) := mul_coeff p q k
+  simp only [h_mul_coeff]
+  have : ∑ i ∈ Finset.range (k + 1), p.coeff i * q.coeff (k - i)
+      = ∑ i ∈ Finset.range (k + 1), q.coeff i * p.coeff (k - i) := by
+      rw [sum_range_reverse]
+      apply Finset.sum_congr rfl
+      intro j _
+      ring_nf
+  rw[this]
+  symm
+  exact h_mul_coeff2
+-/
+
+
+
+def poly1 : CPolynomial ℤ := CPolynomial.mk #[1]
+def poly2 : CPolynomial ℤ := CPolynomial.mk #[]
+
+#eval poly2 * poly1
+
+
+/-- p * q and q * p are equivalent (have equal coefficients everywhere). -/
+theorem mul_comm_equiv [CommRing R] [LawfulBEq R] (p q : CPolynomial R) :
+    Trim.equiv (p * q) (q * p) := by
+  intro i
+  exact mul_comm_coeff p q i
+
+/-- Commutativity of multiplication for CPolynomial over a CommRing. -/
+theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by
+  apply Trim.canonical_ext
+  · exact mul_is_trimmed p q
+  · exact mul_is_trimmed q p
+  · exact mul_comm_equiv p q
 end Operations
 
 section AddCommSemiroup

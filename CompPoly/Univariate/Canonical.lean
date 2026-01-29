@@ -107,6 +107,11 @@ section MulOne
 
 variable [Nontrivial R]
 
+def poly1 : CPolynomial ℤ := CPolynomial.mk #[1]
+def poly2 : CPolynomial ℤ := CPolynomial.mk #[]
+
+#eval poly1 * poly2
+
 /-- Multiplication of canonical polynomials (result is canonical).
 
   The product of two canonical polynomials is canonical because multiplication

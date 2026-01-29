@@ -3,7 +3,7 @@ This file was edited by Aristotle.
 
 Lean version: leanprover/lean4:v4.24.0
 Mathlib version: f897ebcf72cd16f89ab4577d0c826cd14afaafc7
-This project request had uuid: 45c205e8-25a5-4e19-9a13-ed31b707b1b6
+This project request had uuid: f2b8e853-e8ab-48c0-be6b-3728e97e622f
 
 To cite Aristotle, tag @Aristotle-Harmonic on GitHub PRs/issues, and add as co-author to commits:
 Co-authored-by: Aristotle (Harmonic) <aristotle-harmonic@harmonic.fun>
@@ -748,8 +748,7 @@ theorem nsmulRawSucc (n : ℕ) (p : CPolynomial Q) :
     simp [add_coeff, hi]
     rw [_root_.add_mul (R:=Q) n 1 p[i], one_mul]
 
-theorem nsmul_succ [LawfulBEq R] (n : ℕ) {p : CPolynomial R} :
-    nsmul (n + 1) p = nsmul n p + p := by
+theorem nsmul_succ [LawfulBEq R] (n : ℕ) {p : CPolynomial R} : nsmul (n + 1) p = nsmul n p + p := by
   unfold nsmul
   rw [trim_add_trim]
   apply congrArg trim
@@ -785,14 +784,61 @@ theorem one_mul_trimmed [LawfulBEq R] (p : CPolynomial R) : 1 * p = p.trim := by
         by exact fun a b => rfl
   have : 1 * p = (mk #[1] : CPolynomial R).mul p := by rfl
   rw [this, h_mul_def]
-  show (mk #[1]).zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[])
-      = p.trim
+  show (mk #[1]).zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) = p.trim
   conv_lhs => rw [show (mk #[1] : CPolynomial R).zipIdx = #[(1, 0)] by rfl]
   rw [show Array.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' p).mulPowX i)) (mk #[]) #[(1, 0)] =
            (mk #[] : CPolynomial R).add ((smul 1 p).mulPowX 0) by rfl]
   rw [show (smul (1 : R) p).mulPowX 0 = p by simp [smul, mulPowX, one_mul]]
   have : (mk #[]).add p = 0 + p := by rfl
   rw[this, zero_add_trim]
+
+/- OLD STUFF
+theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
+  -- take a similar approach to the above, but induct on the length of p
+  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
+        a.mul b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
+          by exact fun a b => rfl
+  have one_mul_unfold : p * 1 = p.mul (mk #[1] : CPolynomial R) := by rfl
+  rw [one_mul_unfold, h_mul_def]
+  have id_mul : ∀ (a' : R) (i : ℕ), (smul a' (mk #[1])).mulPowX i = (mk #[a']).mulPowX i := by
+    unfold smul; simp
+  simp_rw [id_mul]
+  cases p with | mk lst =>
+  induction lst using List.reverseRecOn with
+  | nil => simp; unfold trim; grind
+  | append_singleton l a ih =>
+    simp only [Array.zipIdx]
+    have mapIdx_append : (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l ++ [a] }) =
+      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l }) ++ #[(a, l.length)] := by
+      simp [Array.mapIdx]
+      sorry
+    rw [mapIdx_append]
+    simp only [ Array.foldl]
+    have ih' := ih rfl
+    simp only at ih'
+    /-
+    have : (Array.foldlM (fun x y => pure (x.add (mulPowX y.2 (mk #[y.1])))) (mk #[])
+      (Array.mapIdx (fun i a => (a, 0 + i)) { toList := l } = trim { toList := l } := by sorry
+    have : mulPowX l.length (mk #[a]) = mk (Array.replicate l.length 0 ++ #[a]) := by rfl
+    have : (trim { toList := l }).add (mk (Array.replicate l.length 0 ++ #[a])) = trim { toList := l ++ [a] } := by
+      simp [add, addRaw, trim, Array.matchSize]
+      sorry
+    -/
+    sorry
+-/
+
+/-UNUSED ARISTOTLE LEMMA
+/-- The coefficient of `p * X^n` at index `i` is `p_{i-n}` if `i >= n`, else 0. -/
+lemma coeff_mulPowX [LawfulBEq R] (p : CPolynomial R) (n i : ℕ) :
+    (p.mulPowX n).coeff i = if i < n then 0 else p.coeff (i - n) := by
+      unfold CPolynomial.mulPowX;
+      split_ifs <;> simp_all +decide [ CPolynomial.coeff ];
+      · rw [ Array.getElem?_append ] ; aesop;
+      · simp only [Array.getElem?_append, Array.getElem?_replicate,Array.size_replicate]
+        split_ifs
+        · omega
+        · rfl
+    -/
 
 /--
 If the initial value is canonical and the step function preserves canonicality,
@@ -847,7 +893,7 @@ omit [BEq R] in
 /-- Computing `(p.zipIdx.map (fun ⟨a, i⟩ => ((smul a 1).mulPowX i).coeff k)).sum` -/
 lemma coeff_sum : ∀ (p : CPolynomial R) (k : ℕ),
     (p.zipIdx.map (fun ⟨a, i⟩ => ((smul a 1).mulPowX i).coeff k)).sum = p.coeff k := by
-  intro p k; induction' p with p ih generalizing k; simp +decide [ * ]
+  intro p k; induction' p with p ih generalizing k ; simp +decide [ * ]
   induction' p using List.reverseRecOn with p ih generalizing k <;>
     simp +decide [ *, List.zipIdx_append ]
   by_cases hk : k < p.length <;> simp_all +decide [ List.getElem?_append_right ]
@@ -856,7 +902,7 @@ lemma coeff_sum : ∀ (p : CPolynomial R) (k : ℕ),
     simp +decide [ Array.getElem?_append, hk ]
   · simp +decide [ CPolynomial.mulPowX ]
     unfold CompPoly.CPolynomial.smul; simp +decide [ Array.getElem?_append ]
-    rw [ if_neg hk.not_gt ]; cases k - p.length <;> simp +decide
+    rw [ if_neg hk.not_gt ] ; cases k - p.length <;> simp +decide
     · exact mul_one _
     · exact rfl
 
@@ -892,21 +938,192 @@ theorem mul_one_trim [LawfulBEq R] (p : CPolynomial R) : p * 1 = p.trim := by
   apply Trim.canonical_ext;
   · exact h_trim;
   · exact h_trim_p;
-  · exact fun i => by rw [ h_equiv i, Trim.coeff_eq_coeff .. ])
+  · exact fun i => by rw [ h_equiv i, Trim.coeff_eq_coeff .. ] ;)
+
+/-POLD
+lemma smul_addRaw_distrib [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), smul a' (q.addRaw r) = (smul a' q).addRaw (smul a' r) := by sorry
+
+lemma smul_distrib_trim [LawfulBEq R] : ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim = smul a' q + smul a' r := by
+  have h_add_def : ∀ (a b : CPolynomial R),  a + b = (a.addRaw b).trim := by intros; rfl
+  simp[h_add_def]
+  intros; apply congrArg trim
+  sorry
+-/
+/-OLD ATTEMPT
+theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) : p * (q + r) = p * q + p * r := by
+  have h_mul_def : ∀ (a b : CompPoly.CPolynomial R),
+      a * b = (a.zipIdx.foldl (fun acc ⟨a', i⟩ => acc.add ((smul a' b).mulPowX i)) (mk #[])) :=
+        by exact fun a b => rfl
+  rw[h_mul_def p (q+r)]
+  rw[h_mul_def p q, h_mul_def p r]
+  have fun_dist: Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' q)))
+      (mk #[]) (Array.zipIdx p) +
+    Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' r)))
+      (mk #[]) (Array.zipIdx p) =
+    Array.foldl
+      (fun acc x =>
+        match x with
+        | (a', i) => acc.add (mulPowX i (smul a' (q + r))))
+      (mk #[]) (Array.zipIdx p)
+            := by
+    suffices ∀ (lst : List (R × ℕ)) (acc1 acc2 : CPolynomial R),
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' q))) acc1 ⟨lst⟩ +
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' r))) acc2 ⟨lst⟩ =
+      Array.foldl (fun acc ⟨a', i⟩ => acc.add (mulPowX i (smul a' (q + r)))) (acc1 + acc2) ⟨lst⟩ by
+      sorry
+    intro lst acc1 acc2
+    induction lst generalizing acc1 acc2 with
+    | nil => simp [Array.foldl]
+    | cons elem tail ih =>
+      simp only [Array.foldl]
+      obtain ⟨a', i⟩ := elem
+      simp[smul_add]
+      have mulPowX_add : ∀ i (p q : CPolynomial R), mulPowX i (p + q) = mulPowX i p + mulPowX i q := by sorry
+      sorry
+  grind
+-/
 
 lemma smul_addRaw_distrib [LawfulBEq R] :
     ∀ (a' : R) (q r : CPolynomial R), smul a' (q.addRaw r)
-        = (smul a' q).addRaw (smul a' r) := by admit
+        = (smul a' q).addRaw (smul a' r) := by
+          -- By definition of addRaw, we can distribute the scalar multiplication over the addition using the distributive property of multiplication over addition in the ring R.
+          intros a' q r
+          simp [CompPoly.CPolynomial.smul, CompPoly.CPolynomial.addRaw];
+          refine' congr_arg _ ( Array.ext _ _ );
+          · -- The size of the zipWith array is determined by the minimum of the sizes of the two input arrays. Since both arrays have the same size, the zipWith arrays will also have the same size.
+            simp [Array.size_zipWith];
+          · intro i hi₁ hi₂; rw [ Array.getElem_zipWith, Array.getElem_zipWith ]; simp +decide [ mul_add ];
+            by_cases hi₃ : i < q.size <;> by_cases hi₄ : i < r.size <;> simp_all +decide
 
 lemma smul_distrib_trim [LawfulBEq R] :
     ∀ (a' : R) (q r : CPolynomial R), (smul a' (q + r)).trim
-        = smul a' q + smul a' r := by admit
+        = smul a' q + smul a' r := by
+          -- By definition of scalar multiplication and addition, we can show that the trimmed version of the scalar multiplication of (q + r) is equal to the sum of the trimmed versions of the scalar multiplications of q and r.
+          intros a' q r
+          have h_coeff : ∀ i, (CompPoly.CPolynomial.smul a' (q + r)).coeff i = (CompPoly.CPolynomial.smul a' q).coeff i + (CompPoly.CPolynomial.smul a' r).coeff i := by
+            -- By definition of scalar multiplication, we know that $(a' * q).coeff i = a' * q.coeff i$ and $(a' * r).coeff i = a' * r.coeff i$.
+            have h_smul : ∀ (a' : R) (q : CompPoly.CPolynomial R) (i : ℕ), (CompPoly.CPolynomial.smul a' q).coeff i = a' * q.coeff i := by
+              exact fun a' q i => smul_equiv q i a'
+            -- By definition of addition in CPolynomial, we know that (q + r).coeff i = q.coeff i + r.coeff i.
+            have h_add : ∀ (q r : CompPoly.CPolynomial R) (i : ℕ), (q + r).coeff i = q.coeff i + r.coeff i := by
+              exact fun q r i => add_coeff_trimmed q r i
+            simp +decide [ h_smul, h_add, mul_add ];
+          -- By definition of `trim`, if two polynomials have the same coefficients for all i, then their trimmed versions are equal.
+          have h_trim_eq : ∀ p q : CPolynomial R, (∀ i, p.coeff i = q.coeff i) → p.trim = q.trim := by
+            exact fun p q a => Trim.eq_of_equiv a
+          convert h_trim_eq _ _ _ using 1;
+          unfold CPolynomial.addRaw; simp +decide [ h_coeff ]
+          grind
+
+noncomputable section AristotleLemmas
+
+/-
+The coefficient of `p * X^i` at index `k` is `0` if `k < i`, and `p_{k-i}` otherwise.
+This follows from `concat_coeff₁` and `concat_coeff₂` applied to `replicate i 0 ++ p`.
+-/
+
+lemma coeff_mulPowX [LawfulBEq R] (i : ℕ) (p : CPolynomial R) (k : ℕ) :
+    (p.mulPowX i).coeff k = if k < i then 0 else p.coeff (k - i) := by
+      split_ifs <;> simp_all +decide [ CPolynomial.coeff, CPolynomial.mulPowX ];
+      · rw [ Array.getElem?_append ]; aesop;
+      · grind
+
+/-
+The coefficient of `p * q` at index `k` is the sum of the coefficients of the terms `(a_i * q) * X^i`.
+-/
+lemma coeff_mul [LawfulBEq R] (p q : CPolynomial R) (k : ℕ) :
+    (p * q).coeff k = (p.zipIdx.toList.map (fun ⟨a, i⟩ => ((smul a q).mulPowX i).coeff k)).sum := by
+      convert coeff_foldl_add _ _ _ _ using 1
+      rotate_left 2
+      exact inferInstance
+      exact inferInstance
+      exact R × ℕ
+      (expose_names; exact inst_2)
+      exact ( Array.zipIdx p ).toList
+      exact fun x => CompPoly.CPolynomial.smul x.1 q |> fun y => CompPoly.CPolynomial.mulPowX x.2 y
+      exact CPolynomial.mk #[]
+      exact k
+      · congr
+        -- By definition of `mul`, we can rewrite the left-hand side as the foldl of the zipIdx of p.
+        simp
+        -- By definition of `mul`, we can rewrite the left-hand side as the foldl of the zipIdx of p, which is exactly what the right-hand side is.
+        have h_mul_def : ∀ (p q : CPolynomial R), p * q = (p.zipIdx.foldl (fun acc ⟨a, i⟩ => acc + (smul a q).mulPowX i) (mk #[])) := by
+          exact fun p q => rfl
+        convert h_mul_def p q using 1
+        conv => rw [ ← Array.toList_zipIdx ]
+        rw [Array.foldl_toList]
+      · cases k <;> simp +decide [ * ]
+
+/-
+Distributivity of scalar multiplication over polynomial addition at the coefficient level.
+-/
+lemma coeff_smul_add_distrib [LawfulBEq R] (a : R) (q r : CPolynomial R) (i : ℕ) :
+    (smul a (q + r)).coeff i = (smul a q).coeff i + (smul a r).coeff i := by
+      -- By definition of `smul` and `add`, we can expand both sides.
+      have h_expand : (smul a (q + r)).coeff i = a * ((q + r).coeff i) ∧
+                         ((smul a q).coeff i) + ((smul a r).coeff i) = a * (q.coeff i) + a * (r.coeff i) := by
+                           have h_expand : ∀ (p : CPolynomial R), (smul a p).coeff i = a * p.coeff i := by
+                             exact fun p => smul_equiv p i a
+                           exact ⟨ h_expand _, by rw [ h_expand, h_expand ] ⟩;
+      convert h_expand.1 using 1; rw [ h_expand.2 ]; rw [ add_coeff_trimmed ]; simp +decide [ mul_add ]
+
+end AristotleLemmas
 
 theorem left_distrib [LawfulBEq R] (p q r : CPolynomial R) :
-    p * (q + r) = p * q + p * r := by admit
+    p * (q + r) = p * q + p * r := by
+      -- Since both sides of the equation are equal to their trimmed versions, we can conclude that both sides are equal.
+      have h_eq : p * (q + r) = p * q + p * r ↔ p * (q + r) = (p * q + p * r).trim := by
+        have h_canonical : (p * q).trim = p * q ∧ (p * r).trim = p * r := by
+          exact ⟨ mul_is_trimmed p q, mul_is_trimmed p r ⟩;
+        -- Since addition is compatible with trimming, the trimmed sum of two polynomials is the sum of their trimmed versions.
+        have h_add_trim : ∀ (p q : CPolynomial R), (p + q).trim = p.trim + q.trim := by
+          intros p q
+          have h_add_trim : ∀ (p q : CPolynomial R), (p + q).trim = p.trim + q.trim := by
+            intros p q
+            have h_add_trim : ∀ (p q : CPolynomial R), (p + q).coeff = (p.trim + q.trim).coeff := by
+              intros p q
+              ext k
+              simp
+              convert add_coeff_trimmed p q k using 1
+              ·exact Eq.symm Array.getD_eq_getD_getElem?
+              · convert add_coeff_trimmed p.trim q.trim k using 1
+                · exact Eq.symm Array.getD_eq_getD_getElem?
+                · rw [ Trim.coeff_eq_coeff, Trim.coeff_eq_coeff ]
+            apply Trim.canonical_ext;
+            · exact Trim.trim_twice (p + q)
+            · apply Trim.trim_twice
+            · exact fun i => by rw [ Trim.coeff_eq_coeff, h_add_trim ]
+          exact h_add_trim p q;
+        rw [ h_add_trim, h_canonical.1, h_canonical.2 ];
+      have h_equiv : (p * (q + r)).coeff = (p * q + p * r).coeff := by
+        ext k;
+        rw [ coeff_mul, add_coeff_trimmed ];
+        rw [ coeff_mul, coeff_mul ];
+        rw [ ← List.sum_map_add ];
+        congr! 2;
+        ext ⟨ a, i ⟩; by_cases hi : k < i <;> simp +decide
+        · simp +decide [CompPoly.CPolynomial.mulPowX]
+          rw [ Array.getElem?_append, Array.getElem?_append, Array.getElem?_append ]; aesop;
+        · convert coeff_smul_add_distrib a q r ( k - i ) using 1;
+          · convert coeff_mulPowX i ( CompPoly.CPolynomial.smul a ( q + r ) ) k using 1;
+            · exact Eq.symm Array.getD_eq_getD_getElem?
+            · aesop
+          · simp +decide [ CompPoly.CPolynomial.mulPowX]
+            grind
+      have h_trim : (p * (q + r)).trim = (p * q + p * r).trim := by
+        exact Trim.eq_of_equiv (congrFun h_equiv)
+      convert h_eq.mpr _
+      convert h_trim using 1
+      exact Eq.symm (mul_is_trimmed p (q + r))
 
-theorem right_distrib [LawfulBEq R] (p q r : CPolynomial R) :
-    (p + q) * r = p * r + q * r := by admit
+/- Aristotle took a wrong turn (reason code: 0). Please try again. -/
+theorem right_distrib [LawfulBEq R] (p q r : CPolynomial R) : (p + q) * r = p * r + q * r := by sorry
 
 -- induct on the length of p
 
@@ -916,6 +1133,9 @@ theorem mul_assoc [LawfulBEq R] (p q r : CPolynomial R) : p * q * r = p * (q * r
 -- use induction and the distributivity theorems
 
 theorem mul_comm [CommRing R] [LawfulBEq R] (p q : CPolynomial R) : p * q = q * p := by sorry
+
+-- define a new multiplication using raw addition and prove commutivity there
+  -- then prove that this new mutliplication gives mul after trimming the result
 
 end Operations
 
