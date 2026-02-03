@@ -107,11 +107,6 @@ section MulOne
 
 variable [Nontrivial R]
 
-def poly1 : CPolynomial ℤ := CPolynomial.mk #[1]
-def poly2 : CPolynomial ℤ := CPolynomial.mk #[]
-
-#eval poly1 * poly2
-
 /-- Multiplication of canonical polynomials (result is canonical).
 
   The product of two canonical polynomials is canonical because multiplication
@@ -119,9 +114,9 @@ def poly2 : CPolynomial ℤ := CPolynomial.mk #[]
 -/
 instance : Mul (CPolynomialC R) where
   mul p q :=
-    ⟨p.val * q.val, by sorry⟩
+    ⟨p.val * q.val, by exact mul_is_trimmed p.val q.val⟩
 
-/-- The constant polynomial 1 is canonical.
+/-- The constant polynomial 1 is canonical, and is the Unit for mutliplication.
 
   This is `#[1]`, which has no trailing zeros.
 
@@ -146,7 +141,23 @@ instance : One (CPolynomialC R) where
   Note: If `c = 0`, this returns `0` (the zero polynomial).
 -/
 def monomialC [DecidableEq R] (n : ℕ) (c : R) : CPolynomialC R :=
-  ⟨CPolynomial.monomial n c, by sorry⟩
+  ⟨CPolynomial.monomial n c, by
+    unfold monomial
+    split_ifs with hc
+    · exact Trim.canonical_empty
+    · apply Trim.canonical_iff.mpr
+      intro hp
+      simp only [mk]
+      simp only [Array.append_singleton, ne_eq]
+      refine (Trim.lastNonzero_last_iff (id (Eq.refl ((Array.replicate n 0).push c)) ▸ hp)).mp ?_
+      refine (Trim.lastNonzero_last_iff hp).mpr ?_
+      refine (Trim.lastNonzero_last_iff hp).mp ?_
+      rw [Trim.lastNonzero_last_iff hp]
+      simp only [mk]
+      convert hc using 1
+      simp [Array.getLast]
+      grind
+    ⟩
 
 /-- Natural number degree of a canonical polynomial.
 
@@ -156,20 +167,47 @@ def monomialC [DecidableEq R] (n : ℕ) (c : R) : CPolynomialC R :=
 def natDegree (p : CPolynomialC R) : ℕ := p.val.natDegree
 
 -- TODO: Prove multiplicative properties, e.g.
-lemma one_mul (p : CPolynomialC R) : 1 * p = p := by sorry
-lemma mul_one (p : CPolynomialC R) : p * 1 = p := by sorry
-lemma mul_assoc (p q r : CPolynomialC R) : (p * q) * r = p * (q * r) := by sorry
-lemma zero_mul (p : CPolynomialC R) : 0 * p = 0 := by sorry
-lemma mul_zero (p : CPolynomialC R) : p * 0 = 0 := by sorry
-lemma left_distrib (p q r : CPolynomialC R) : p * (q + r) = p * q + p * r := by sorry
-lemma right_distrib (p q r : CPolynomialC R) : (p + q) * r = p * r + q * r := by sorry
+
+lemma one_mul (p : CPolynomialC R) : 1 * p = p := by
+  apply Subtype.ext
+  have : (1 * p : CPolynomialC R) = (1: CPolynomial R) * p.val := rfl
+  rw[this, one_mul_trim]
+  exact p.prop
+
+lemma mul_one (p : CPolynomialC R) : p * 1 = p := by
+  apply Subtype.ext
+  have : (p * 1 : CPolynomialC R) = p.val * (1: CPolynomial R) := rfl
+  rw[this, mul_one_trim]
+  exact p.prop
+
+omit [Nontrivial R] in
+lemma mul_assoc (p q r : CPolynomialC R) : (p * q) * r = p * (q * r) := by
+  apply Subtype.ext
+  exact CPolynomial.mul_assoc p.val q.val r.val
+
+omit [Nontrivial R] in
+lemma zero_mul (p : CPolynomialC R) : 0 * p = 0 := by
+  apply Subtype.ext
+  exact CPolynomial.zero_mul p.val
+
+omit [Nontrivial R] in
+lemma mul_zero (p : CPolynomialC R) : p * 0 = 0 := by
+  apply Subtype.ext
+  exact CPolynomial.mul_zero p.val
+
+omit [Nontrivial R] in
+lemma left_distrib (p q r : CPolynomialC R) : p * (q + r) = p * q + p * r := by
+  apply Subtype.ext
+  exact CPolynomial.left_distrib p.val q.val r.val
+
+omit [Nontrivial R] in
+lemma right_distrib (p q r : CPolynomialC R) : (p + q) * r = p * r + q * r := by
+  apply Subtype.ext
+  exact CPolynomial.right_distrib p.val q.val r.val
 
 end MulOne
 
 section Semiring
-
-variable [Semiring R] [LawfulBEq R] [Nontrivial R]
-
 
 /-- `CPolynomialC R` forms a semiring when `R` is a semiring.
 
@@ -178,52 +216,48 @@ variable [Semiring R] [LawfulBEq R] [Nontrivial R]
 
   TODO: Complete all the required proofs for the semiring axioms.
 -/
-instance  : Semiring (CPolynomialC R) where
+instance [Semiring R] [LawfulBEq R] [Nontrivial R] : Semiring (CPolynomialC R) where
   add_assoc := add_assoc
   zero_add := zero_add
   add_zero := add_zero
   add_comm := add_comm
-  zero_mul := by sorry
-  mul_zero := by sorry
-  mul_assoc := by sorry
-  one_mul := by sorry
-  mul_one := by sorry
-  left_distrib := by sorry
-  right_distrib := by sorry
+  zero_mul := zero_mul
+  mul_zero := mul_zero
+  mul_assoc := mul_assoc
+  one_mul := one_mul
+  mul_one := mul_one
+  left_distrib := left_distrib
+  right_distrib := right_distrib
   nsmul := nsmul
   nsmul_zero := nsmul_zero
   nsmul_succ := nsmul_succ
   npow n p := ⟨p.val ^ n, by sorry⟩
-  npow_zero := by sorry
-  npow_succ := by sorry
-  natCast_zero := by sorry
-  natCast_succ := by sorry
+  npow_zero := by intro x; apply Subtype.ext; rfl
+  npow_succ := by intro n p; sorry
+  natCast_zero := by rfl
+  natCast_succ := by intro n; rfl
 
 end Semiring
 
 section CommSemiring
 
-variable [CommSemiring R] [LawfulBEq R] [Nontrivial R]
-
 /-- `CPolynomialC R` forms a commutative semiring when `R` is a commutative semiring.
 
   Commutativity follows from the commutativity of multiplication in the base ring.
 -/
-instance : CommSemiring (CPolynomialC R) where
+instance [CommSemiring R] [LawfulBEq R] [Nontrivial R] : CommSemiring (CPolynomialC R) where
   mul_comm := by sorry
 
 end CommSemiring
 
 section Ring
 
-variable [Ring R] [LawfulBEq R] [Nontrivial R]
-
 /-- `CPolynomialC R` forms a ring when `R` is a ring.
 
   The ring structure extends the semiring structure with negation and subtraction.
   Most of the structure is already provided by the `Semiring` instance.
 -/
-instance : Ring (CPolynomialC R) where
+instance [Ring R] [LawfulBEq R] [Nontrivial R] : Ring (CPolynomialC R) where
   sub_eq_add_neg := by intro a b; rfl
   zsmul := zsmulRec
   zsmul_zero' := by sorry
@@ -237,13 +271,11 @@ end Ring
 
 section CommRing
 
-variable [CommRing R] [LawfulBEq R] [Nontrivial R]
-
 /-- `CPolynomialC R` forms a commutative ring when `R` is a commutative ring.
 
   This combines the `CommSemiring` and `Ring` structures.
 -/
-instance : CommRing (CPolynomialC R) where
+instance [CommRing R] [LawfulBEq R] [Nontrivial R] : CommRing (CPolynomialC R) where
   -- All structure inherited from `CommSemiring` and `Ring` instances
 
 end CommRing
