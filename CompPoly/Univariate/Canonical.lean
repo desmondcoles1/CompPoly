@@ -239,17 +239,6 @@ instance [Semiring R] [LawfulBEq R] [Nontrivial R] : Semiring (CPolynomialC R) w
 
 end Semiring
 
-section CommSemiring
-
-/-- `CPolynomialC R` forms a commutative semiring when `R` is a commutative semiring.
-
-  Commutativity follows from the commutativity of multiplication in the base ring.
--/
-instance [CommSemiring R] [LawfulBEq R] [Nontrivial R] : CommSemiring (CPolynomialC R) where
-  mul_comm := by sorry
-
-end CommSemiring
-
 section Ring
 
 /-- `CPolynomialC R` forms a ring when `R` is a ring.
@@ -260,23 +249,43 @@ section Ring
 instance [Ring R] [LawfulBEq R] [Nontrivial R] : Ring (CPolynomialC R) where
   sub_eq_add_neg := by intro a b; rfl
   zsmul := zsmulRec
-  zsmul_zero' := by sorry
-  zsmul_succ' := by sorry
-  zsmul_neg' := by sorry
-  intCast_ofNat := by sorry
-  intCast_negSucc := by sorry
-  neg_add_cancel := by sorry
+  zsmul_zero' := by intro a; rfl
+  zsmul_succ' := by intro a; exact fun a_2 => rfl
+  zsmul_neg' := by intro a n; rfl
+  intCast_ofNat := by intro n; rfl
+  intCast_negSucc := by intro n; rfl
+  neg_add_cancel := by intro a; exact neg_add_cancel a
 
 end Ring
 
+section CommSemiring
+
+/-- `CPolynomialC R` forms a commutative semiring when `R` is a commutative semiring.
+
+  Commutativity follows from the commutativity of multiplication in the base ring.
+-/
+instance [CommSemiring R] [LawfulBEq R] [Nontrivial R] : CommSemiring (CPolynomialC R) where
+  mul_comm := by admit
+
+end CommSemiring
+
 section CommRing
+
+variable {R : Type*} [CommRing R] [BEq R]
+
+lemma mul_comm [LawfulBEq R] (p q : CPolynomialC R) : p * q = q * p := by
+  apply Subtype.ext
+  have dist_lhs : (p * q : CPolynomialC R) = (p.val * q.val : CPolynomial R) := rfl
+  have dist_rhs : (q * p : CPolynomialC R) = (q.val * p.val : CPolynomial R) := rfl
+  rw [dist_lhs, dist_rhs]
+  exact CPolynomial.mul_comm p.val q.val
 
 /-- `CPolynomialC R` forms a commutative ring when `R` is a commutative ring.
 
   This combines the `CommSemiring` and `Ring` structures.
 -/
 instance [CommRing R] [LawfulBEq R] [Nontrivial R] : CommRing (CPolynomialC R) where
-  -- All structure inherited from `CommSemiring` and `Ring` instances
+  mul_comm := mul_comm
 
 end CommRing
 
