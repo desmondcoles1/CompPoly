@@ -97,6 +97,9 @@ instance : Mul (CPolynomial R) where
   mul p q :=
     ⟨p.val * q.val, by exact mul_is_trimmed p.val q.val⟩
 
+lemma one_is_trimmed [Nontrivial R] : (1 : CompPoly.CPolynomial.Raw R).trim = 1 :=
+  Trim.push_trim #[] 1 one_ne_zero
+
 /-- The constant polynomial 1 is canonical, and is the Unit for multiplication.
 
   This is `#[1]`, which has no trailing zeros.
@@ -104,14 +107,7 @@ instance : Mul (CPolynomial R) where
   This proof does not work without the assumption that R is non-trivial.
 -/
 instance [Nontrivial R] : One (CPolynomial R) where
-  one := ⟨CPolynomial.Raw.C 1, by
-  unfold C trim
-  have nonzero : #[(1 : R)].size = 1 := by aesop
-  have : lastNonzero #[(1 : R)] = some ⟨0, by simp⟩ := by
-    unfold lastNonzero Array.findIdxRev? Array.findIdxRev?.find
-    simp; aesop
-  rw[this]
-  grind
+  one := ⟨CPolynomial.Raw.C 1, by exact one_is_trimmed
   ⟩
 
 /-- Construct a canonical monomial `c * X^n` as a `CPolynomial R`.
@@ -165,6 +161,39 @@ lemma right_distrib (p q r : CPolynomial R) : (p + q) * r = p * r + q * r := by
   apply Subtype.ext
   exact CPolynomial.Raw.right_distrib p.val q.val r.val
 
+omit [LawfulBEq R] in
+lemma pow_zero (p : CompPoly.CPolynomial.Raw R) :
+    p ^ 0 = CompPoly.CPolynomial.Raw.C 1 := by
+      exact rfl
+
+omit [LawfulBEq R]
+lemma pow_succ (p : CompPoly.CPolynomial.Raw R) (n : ℕ) :
+    p ^ (n + 1) = p * (p ^ n) := by
+      convert ( Function.iterate_succ_apply' ( mul p ) n ( CompPoly.CPolynomial.Raw.C 1 ) )
+           using 1
+
+lemma pow_is_trimmed [LawfulBEq R] [Nontrivial R]
+    (p : CompPoly.CPolynomial.Raw R) (n : ℕ) : (p ^ n).trim = p ^ n := by
+      induction' n with n ih generalizing p;
+      · convert one_is_trimmed
+        · infer_instance
+        · infer_instance
+      · have h_exp : p ^ (n + 1) = p * p ^ n := by
+          exact pow_succ p n
+        rw [h_exp]
+        convert mul_is_trimmed p ( p ^ n ) using 1
+
+lemma pow_succ_right [LawfulBEq R] [Nontrivial R]
+    (p : CompPoly.CPolynomial.Raw R) (n : ℕ) : p ^ (n + 1) = p ^ n * p := by
+      convert pow_succ p n using 1;
+      induction' n with n ih;
+      · have h_pow_zero : p ^ 0 = 1 := by
+          exact rfl
+        rw [ h_pow_zero, mul_one_trim, one_mul_trim ];
+      · simp_all +decide [ pow_succ ];
+        convert CPolynomial.Raw.mul_assoc p ( p ^ n ) p using 1;
+        grind
+
 /-- `CPolynomial R` forms a semiring when `R` is a semiring.
 
   The semiring structure extends the `AddCommGroup` structure with multiplication.
@@ -187,9 +216,10 @@ instance [LawfulBEq R] [Nontrivial R] : Semiring (CPolynomial R) where
   nsmul := nsmul
   nsmul_zero := nsmul_zero
   nsmul_succ := nsmul_succ
-  npow n p := ⟨p.val ^ n, by sorry⟩
+  npow n p := ⟨p.val ^ n, by apply CompPoly.CPolynomial.pow_is_trimmed⟩
   npow_zero := by intro x; apply Subtype.ext; rfl
-  npow_succ := by sorry
+  npow_succ := by intro n p; apply Subtype.ext; exact
+      (CompPoly.CPolynomial.pow_succ_right p.val n)
   natCast_zero := by rfl
   natCast_succ := by intro n; rfl
 
